@@ -8,10 +8,27 @@ use std::{
 };
 
 use bytes::{BufMut, BytesMut};
+use serde::{Serialize, Deserialize};
+use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
 
 // Available if you need it!
-// use serde_bencode
+use serde_bencode;
+
+#[derive(Serialize, Deserialize)]
+struct InfoDict {
+    name: String,
+    #[serde(rename = "piece length")]
+    piece_length: u64,
+    pieces: ByteBuf,
+    length: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Metainfo {
+    announce: String,
+    info: InfoDict,
+}
 
 #[derive(Clone)]
 enum Bencoded {
@@ -337,63 +354,16 @@ fn main() {
                     why
                 ),
             }
-            let (decoded_value, _rest) = decode_bencoded_value(&cts);
-            let tracker: String;
-            let length: i64;
-            let piece_length: i64;
-            let pieces: Vec<Vec<u8>>;
-            let info_dict: Bencoded;
-            match &decoded_value {
-                Bencoded::Dict(d) => {
-                    assert!(
-                        d.contains_key("announce"),
-                        "torrent file dict must contain announce key"
-                    );
-                    assert!(
-                        d.contains_key("info"),
-                        "torrent file dict must contain info key"
-                    );
-                    match d.get("announce") {
-                        Some(Bencoded::String(s)) => {
-                            tracker = String::from_utf8(s.to_vec())
-                                .expect("announce value must be valid utf-8")
-                        }
-                        _ => panic!("torrent file announce key's value is not a string"),
-                    }
-                    match d.get("info") {
-                        Some(Bencoded::Dict(d)) => {
-                            info_dict = Bencoded::Dict(d.clone());
-                            match d.get("length") {
-                                Some(Bencoded::Integer(i)) => length = *i,
-                                _ => panic!("info.length is not an integer"),
-                            }
-                            match d.get("piece length") {
-                                Some(Bencoded::Integer(i)) => piece_length = *i,
-                                _ => panic!("info.\"piece length\" is not an integer"),
-                            }
-                            match d.get("pieces") {
-                                Some(Bencoded::String(s)) => {
-                                    pieces = s.chunks_exact(20).map(Vec::from).collect();
-                                }
-                                _ => panic!("info.pieces is not a string"),
-                            }
-                        }
-                        _ => panic!("info is not a dict"),
-                    }
-                }
-                _ => panic!("torrent file should be a bencoded dict"),
-            }
-            println!("Tracker URL: {}", tracker);
-            println!("Length: {}", length);
-            let infodict_ser = info_dict.serialize();
-            //eprintln!("infodict_ser: {}", String::from_utf8_lossy(&infodict_ser));
+            let metainf: Metainfo = serde_bencode::from_bytes(&cts).expect("could not deserialize metainfo file");
+            println!("Tracker URL: {}", metainf.announce);
+            println!("Length: {}", metainf.info.length);
             let mut hasher = Sha1::new();
-            hasher.update(infodict_ser);
+            hasher.update(serde_bencode::to_bytes(&metainf.info).expect("could not serialize info dict for hashing"));
             let infohash = hasher.finalize();
             println!("Info Hash: {}", hex::encode(infohash));
-            println!("Piece Length: {}", piece_length);
+            println!("Piece Length: {}", metainf.info.piece_length);
             println!("Piece Hashes:");
-            for ph in pieces {
+            for ph in metainf.info.pieces.chunks(20).map(Vec::from) {
                 println!("{}", hex::encode(ph));
             }
         }
