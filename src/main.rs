@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, env, path::Path, fs::File, io::Read};
+use std::{collections::BTreeMap, env, fs::File, io::Read, path::Path};
 
 use bytes::BytesMut;
 
@@ -130,27 +130,50 @@ fn main() {
                 Err(why) => panic!("couldn't open {}: {}", torrent_path.display(), why),
                 Ok(file) => file,
             };
-            let fsz = file.metadata().expect("couldn't read torrent file metadata").len();
+            let fsz = file
+                .metadata()
+                .expect("couldn't read torrent file metadata")
+                .len();
             eprintln!("torrent file is {} bytes", fsz);
-            let mut cts = BytesMut::with_capacity(fsz.try_into().expect("torrent file too big to fit into memory"));
-            cts.resize(fsz.try_into().expect("entire torrent file cannot fit in buffer"), 0);
+            let mut cts = BytesMut::with_capacity(
+                fsz.try_into()
+                    .expect("torrent file too big to fit into memory"),
+            );
+            cts.resize(
+                fsz.try_into()
+                    .expect("entire torrent file cannot fit in buffer"),
+                0,
+            );
             match file.read(&mut cts) {
                 Ok(0) => panic!("nothing read from torrent file"),
                 Ok(bsz) => eprintln!("read {} bytes into buffer", bsz),
-                Err(why) => panic!("error reading torrent file {}: {}", torrent_path.display(), why),
+                Err(why) => panic!(
+                    "error reading torrent file {}: {}",
+                    torrent_path.display(),
+                    why
+                ),
             }
             let (decoded_value, _rest) = decode_bencoded_value(&cts);
             let tracker: String;
             match decoded_value {
                 Bencoded::Dict(d) => {
-                    assert!(d.contains_key("announce"), "torrent file dict must contain announce key");
-                    assert!(d.contains_key("info"), "torrent file dict must contain info key");
+                    assert!(
+                        d.contains_key("announce"),
+                        "torrent file dict must contain announce key"
+                    );
+                    assert!(
+                        d.contains_key("info"),
+                        "torrent file dict must contain info key"
+                    );
                     match d.get("announce") {
-                        Some(Bencoded::String(s)) => tracker = String::from_utf8(s.to_vec()).expect("announce value must be valid utf-8"),
+                        Some(Bencoded::String(s)) => {
+                            tracker = String::from_utf8(s.to_vec())
+                                .expect("announce value must be valid utf-8")
+                        }
                         _ => panic!("torrent file announce key's value is not a string"),
                     }
                 }
-                _ => panic!("torrent file should be a bencoded dict")
+                _ => panic!("torrent file should be a bencoded dict"),
             }
             println!("Tracker URL: {}", tracker);
         }
