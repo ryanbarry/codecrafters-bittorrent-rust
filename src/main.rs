@@ -126,7 +126,7 @@ fn main() {
         "info" => {
             let torrent_path = Path::new(&args[2]);
             println!("looking at torrent file: {}", torrent_path.display());
-            let mut file = match File::open(&torrent_path) {
+            let mut file = match File::open(torrent_path) {
                 Err(why) => panic!("couldn't open {}: {}", torrent_path.display(), why),
                 Ok(file) => file,
             };
