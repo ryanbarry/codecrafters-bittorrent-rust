@@ -1,7 +1,5 @@
 use std::{collections::BTreeMap, env, fs::File, io::Read, path::Path};
 
-use bytes::BytesMut;
-
 // Available if you need it!
 // use serde_bencode
 
@@ -135,16 +133,8 @@ fn main() {
                 .expect("couldn't read torrent file metadata")
                 .len();
             eprintln!("torrent file is {} bytes", fsz);
-            let mut cts = BytesMut::with_capacity(
-                fsz.try_into()
-                    .expect("torrent file too big to fit into memory"),
-            );
-            cts.resize(
-                fsz.try_into()
-                    .expect("entire torrent file cannot fit in buffer"),
-                0,
-            );
-            match file.read(&mut cts) {
+            let mut cts = Vec::with_capacity(fsz.try_into().expect("couldn't make a buffer big enough to hold entire torrent file"));
+            match file.read_to_end(&mut cts) {
                 Ok(0) => panic!("nothing read from torrent file"),
                 Ok(bsz) => eprintln!("read {} bytes into buffer", bsz),
                 Err(why) => panic!(
