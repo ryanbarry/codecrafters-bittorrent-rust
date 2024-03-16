@@ -1,4 +1,11 @@
-use std::{collections::BTreeMap, env, fs::File, io::Read, path::Path};
+use std::{
+    collections::BTreeMap,
+    env,
+    fs::File,
+    io::Read,
+    net::{Ipv4Addr, SocketAddrV4},
+    path::Path,
+};
 
 use bytes::{BufMut, BytesMut};
 use sha1::{Digest, Sha1};
@@ -132,10 +139,10 @@ fn decode_bencoded_value(encoded_value: &[u8]) -> (Bencoded, &[u8]) {
             let number_string = String::from_utf8(encoded_value[..colon_index].to_vec())
                 .expect("number string must be valid utf-8");
             let number = number_string.parse::<usize>().unwrap();
-            let string = &encoded_value[colon_index + 1..colon_index + 1 + number];
+            let bytes = &encoded_value[colon_index + 1..colon_index + 1 + number];
             (
-                Bencoded::String(string.to_vec()),
-                &encoded_value[number + colon_index + 1..],
+                Bencoded::String(bytes.to_vec()),
+                &encoded_value[colon_index + 1 + number..],
             )
         }
         Some(_) | None => {
@@ -235,29 +242,76 @@ fn main() {
                     _ => format!("%{:02X}", b),
                 })
                 .collect::<String>();
-            eprintln!("ih_urlenc: {}", ih_urlenc);
+            //eprintln!("ih_urlenc: {}", ih_urlenc);
 
             eprintln!("fetching peers from tracker at {}", tracker);
             let tracker_client = reqwest::blocking::Client::new();
-            let mut req = tracker_client.get(tracker).query(&[
-                ("peer_id", "00112233445566778899"),
-                ("left", &length.to_string()),
-                ("port", "6881"),
-                ("uploaded", "0"),
-                ("downloaded", "0"),
-                ("compact", "1"),
-            ]).build().expect("failed to create valid peers request");
-            let q = req.url().query().expect("query parameters were not created");
+            let mut req = tracker_client
+                .get(tracker)
+                .query(&[
+                    ("peer_id", "00112233445566778899"),
+                    ("left", &length.to_string()),
+                    ("port", "6881"),
+                    ("uploaded", "0"),
+                    ("downloaded", "0"),
+                    ("compact", "1"),
+                ])
+                .build()
+                .expect("failed to create valid peers request");
+            let q = req
+                .url()
+                .query()
+                .expect("query parameters were not created");
             let newq = String::from(q.to_owned() + "&info_hash=" + &ih_urlenc);
             req.url_mut().set_query(Some(&newq));
 
             //eprintln!("request: {:?}", req);
-            let body = tracker_client
+            let mut res = tracker_client
                 .execute(req)
-                .expect("failed to get from tracker")
-                .text()
-                .expect("tracker response body empty");
-            eprintln!("got a response: {}", body);
+                .expect("failed to get from tracker");
+            let body = {
+                let mut buf = vec![].writer();
+                res.copy_to(&mut buf)
+                    .expect("could not read response from tracker");
+                buf.into_inner()
+            };
+            //eprintln!("got a response: {}", String::from_utf8_lossy(&body));
+            let (announce, _rest) = decode_bencoded_value(&body);
+            let peers: Vec<SocketAddrV4>;
+            match announce {
+                Bencoded::Dict(d) => {
+                    match d.get("failure reason") {
+                        Some(Bencoded::String(s)) => panic!(
+                            "tracker responded with an error: {}",
+                            String::from_utf8_lossy(s)
+                        ),
+                        _ => {}
+                    }
+                    match d.get("peers") {
+                        Some(Bencoded::String(s)) => {
+                            peers = s
+                                .chunks(6)
+                                .map(|peer| {
+                                    let mut ipbytes: [u8; 4] = [0; 4];
+                                    ipbytes.copy_from_slice(&peer[0..4]);
+                                    let mut skbytes = [0u8; 2];
+                                    skbytes.copy_from_slice(&peer[4..6]);
+                                    SocketAddrV4::new(
+                                        Ipv4Addr::from(ipbytes),
+                                        u16::from_be_bytes(skbytes),
+                                    )
+                                })
+                                .collect();
+                        }
+                        Some(_) => panic!("tracker response contains peers not encoded as string"),
+                        None => panic!("tracker response does not contain peers key"),
+                    }
+                }
+                _ => panic!("got non-dict response from tracker"),
+            }
+            for p in peers.iter() {
+                println!("{}", p);
+            }
         }
         "info" => {
             let torrent_path = Path::new(&args[2]);
