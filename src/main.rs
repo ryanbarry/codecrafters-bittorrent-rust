@@ -8,8 +8,7 @@ fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
     let mut chars = encoded_value.chars();
     match chars.next() {
         Some('i') => {
-            assert_eq!(encoded_value.chars().last(), Some('e'), "bencoded integer doesn't end with e");
-            let numerals = &encoded_value[1..encoded_value.len()-1];
+            let numerals: String = chars.take_while(|c| *c!='e').collect();
             let integer: isize = numerals.parse().expect("failed to parse numerals into integer");
             serde_json::Value::Number(integer.into())
         }
