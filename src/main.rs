@@ -145,6 +145,7 @@ fn main() {
             }
             let (decoded_value, _rest) = decode_bencoded_value(&cts);
             let tracker: String;
+            let length: i64;
             match decoded_value {
                 Bencoded::Dict(d) => {
                     assert!(
@@ -162,10 +163,20 @@ fn main() {
                         }
                         _ => panic!("torrent file announce key's value is not a string"),
                     }
+                    match d.get("info") {
+                        Some(Bencoded::Dict(d)) => {
+                            match d.get("length") {
+                                Some(Bencoded::Integer(i)) => length = *i,
+                                _ => panic!("info.length is not an integer"),
+                            }
+                        }
+                        _ => panic!("info is not a dict"),
+                    }
                 }
                 _ => panic!("torrent file should be a bencoded dict"),
             }
             println!("Tracker URL: {}", tracker);
+            println!("Length: {}", length);
         }
         _ => {
             println!("unknown command: {}", args[1])
