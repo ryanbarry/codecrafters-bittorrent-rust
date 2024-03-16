@@ -7,6 +7,23 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
     // If encoded_value starts with a digit, it's a string
     let mut chars = encoded_value.chars().peekable();
     match chars.next() {
+        Some('d') => {
+            let mut dict = serde_json::map::Map::new();
+            let mut rest: String;
+            while chars.peek() != Some(&'e') {
+                rest = chars.collect::<String>();
+                let (key, r) = decode_bencoded_value(&rest);
+                assert!(key.is_string(), "bencoded dictionary keys must be strings");
+                let (val, r) = decode_bencoded_value(&r);
+                dict.insert(key.to_string().trim_matches('"').to_string(), val);
+                chars = r.chars().peekable();
+            }
+            chars.next();
+            (
+                serde_json::Value::Object(dict),
+                &encoded_value[encoded_value.len() - chars.count()..],
+            )
+        }
         Some('l') => {
             let mut vals = vec![];
             let mut rest: String;
