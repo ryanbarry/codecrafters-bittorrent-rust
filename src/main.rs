@@ -14,7 +14,7 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
                 rest = chars.collect::<String>();
                 let (key, r) = decode_bencoded_value(&rest);
                 assert!(key.is_string(), "bencoded dictionary keys must be strings");
-                let (val, r) = decode_bencoded_value(&r);
+                let (val, r) = decode_bencoded_value(r);
                 dict.insert(key.to_string().trim_matches('"').to_string(), val);
                 chars = r.chars().peekable();
             }
@@ -54,7 +54,7 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
             let colon_index = encoded_value.find(':').unwrap();
             let number_string = &encoded_value[..colon_index];
             let number = number_string.parse::<usize>().unwrap();
-            let string = &encoded_value[colon_index + 1..colon_index + 1 + number as usize];
+            let string = &encoded_value[colon_index + 1..colon_index + 1 + number];
             (
                 serde_json::Value::String(string.to_string()),
                 &encoded_value[number + colon_index + 1..],
