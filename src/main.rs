@@ -162,6 +162,103 @@ fn main() {
             println!("{}", decoded_value.to_json());
             eprintln!("rest: {}", String::from_utf8_lossy(rest));
         }
+        "peers" => {
+            let torrent_path = Path::new(&args[2]);
+            //eprintln!("looking at torrent file: {}", torrent_path.display());
+            let mut file = match File::open(torrent_path) {
+                Err(why) => panic!("couldn't open {}: {}", torrent_path.display(), why),
+                Ok(file) => file,
+            };
+            let fsz = file
+                .metadata()
+                .expect("couldn't read torrent file metadata")
+                .len();
+            //eprintln!("torrent file is {} bytes", fsz);
+            let mut cts = Vec::with_capacity(
+                fsz.try_into()
+                    .expect("couldn't make a buffer big enough to hold entire torrent file"),
+            );
+            match file.read_to_end(&mut cts) {
+                Ok(0) => panic!("nothing read from torrent file"),
+                Ok(_bsz) => {} //eprintln!("read {} bytes into buffer", bsz),
+                Err(why) => panic!(
+                    "error reading torrent file {}: {}",
+                    torrent_path.display(),
+                    why
+                ),
+            }
+            let (decoded_value, _rest) = decode_bencoded_value(&cts);
+            let tracker: String;
+            let length: i64;
+            let info_dict: Bencoded;
+            match &decoded_value {
+                Bencoded::Dict(d) => {
+                    assert!(
+                        d.contains_key("announce"),
+                        "torrent file dict must contain announce key"
+                    );
+                    assert!(
+                        d.contains_key("info"),
+                        "torrent file dict must contain info key"
+                    );
+                    match d.get("announce") {
+                        Some(Bencoded::String(s)) => {
+                            tracker = String::from_utf8(s.to_vec())
+                                .expect("announce value must be valid utf-8")
+                        }
+                        _ => panic!("torrent file announce key's value is not a string"),
+                    }
+                    match d.get("info") {
+                        Some(Bencoded::Dict(d)) => {
+                            info_dict = Bencoded::Dict(d.clone());
+                            match d.get("length") {
+                                Some(Bencoded::Integer(i)) => length = *i,
+                                _ => panic!("info.length is not an integer"),
+                            }
+                        }
+                        _ => panic!("torrent file is missing info dict"),
+                    }
+                }
+                _ => panic!("torrent file isn't a bencoded dict"),
+            }
+            let infodict_ser = info_dict.serialize();
+            //eprintln!("infodict_ser: {}", String::from_utf8_lossy(&infodict_ser));
+            let mut hasher = Sha1::new();
+            hasher.update(infodict_ser);
+            let infohash = hasher.finalize();
+            let ih_urlenc = infohash
+                .iter()
+                .map(|b| match *b {
+                    b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'-' | b'.' | b'_' | b'~' => {
+                        format!("{}", *b as char)
+                    }
+                    _ => format!("%{:02X}", b),
+                })
+                .collect::<String>();
+            eprintln!("ih_urlenc: {}", ih_urlenc);
+
+            eprintln!("fetching peers from tracker at {}", tracker);
+            let tracker_client = reqwest::blocking::Client::new();
+            let mut req = tracker_client.get(tracker).query(&[
+                ("peer_id", "00112233445566778899"),
+                ("left", &length.to_string()),
+                ("port", "6881"),
+                ("uploaded", "0"),
+                ("downloaded", "0"),
+                ("compact", "1"),
+            ]).build().expect("failed to create valid peers request");
+            let q = req.url().query().expect("query parameters were not created");
+            let newq = String::from(q.to_owned() + "&info_hash=" + &ih_urlenc);
+            req.url_mut().set_query(Some(&newq));
+
+            //eprintln!("request: {:?}", req);
+            let body = tracker_client
+                .execute(req)
+                .expect("failed to get from tracker")
+                .text()
+                .expect("tracker response body empty");
+            eprintln!("got a response: {}", body);
+        }
         "info" => {
             let torrent_path = Path::new(&args[2]);
             //eprintln!("looking at torrent file: {}", torrent_path.display());
