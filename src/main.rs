@@ -191,6 +191,7 @@ fn main() {
             let tracker: String;
             let length: i64;
             let piece_length: i64;
+            let pieces: Vec<Vec<u8>>;
             let info_dict: Bencoded;
             match &decoded_value {
                 Bencoded::Dict(d) => {
@@ -220,6 +221,12 @@ fn main() {
                                 Some(Bencoded::Integer(i)) => piece_length = *i,
                                 _ => panic!("info.\"piece length\" is not an integer"),
                             }
+                            match d.get("pieces") {
+                                Some(Bencoded::String(s)) => {
+                                    pieces = s.chunks_exact(20).map(|v| Vec::from(v)).collect();
+                                }
+                                _ => panic!("info.pieces is not a string"),
+                            }
                         }
                         _ => panic!("info is not a dict"),
                     }
@@ -235,6 +242,10 @@ fn main() {
             let infohash = hasher.finalize();
             println!("Info Hash: {}", hex::encode(infohash));
             println!("Piece Length: {}", piece_length);
+            println!("Piece Hashes:");
+            for ph in pieces {
+                println!("{}", hex::encode(ph));
+            }
         }
         _ => {
             println!("unknown command: {}", args[1])
