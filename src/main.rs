@@ -17,12 +17,20 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
                 chars = r.chars().peekable();
             }
             chars.next();
-            (serde_json::Value::Array(vals), &encoded_value[encoded_value.len()-chars.count()..])
+            (
+                serde_json::Value::Array(vals),
+                &encoded_value[encoded_value.len() - chars.count()..],
+            )
         }
         Some('i') => {
-            let numerals: String = chars.take_while(|c| *c!='e').collect();
-            let integer: isize = numerals.parse().expect("failed to parse numerals into integer");
-            (serde_json::Value::Number(integer.into()), &encoded_value[numerals.len()+2..])
+            let numerals: String = chars.take_while(|c| *c != 'e').collect();
+            let integer: isize = numerals
+                .parse()
+                .expect("failed to parse numerals into integer");
+            (
+                serde_json::Value::Number(integer.into()),
+                &encoded_value[numerals.len() + 2..],
+            )
         }
         Some(c) if c.is_ascii_digit() => {
             // Example: "5:hello" -> "hello"
@@ -30,7 +38,10 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
             let number_string = &encoded_value[..colon_index];
             let number = number_string.parse::<usize>().unwrap();
             let string = &encoded_value[colon_index + 1..colon_index + 1 + number as usize];
-            (serde_json::Value::String(string.to_string()), &encoded_value[number+2..])
+            (
+                serde_json::Value::String(string.to_string()),
+                &encoded_value[number + colon_index + 1..],
+            )
         }
         Some(_) | None => {
             panic!("Unhandled encoded value: {}", encoded_value)
