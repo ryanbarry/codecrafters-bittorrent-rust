@@ -1,8 +1,12 @@
 use std::{collections::BTreeMap, env, fs::File, io::Read, path::Path};
 
+use bytes::{BufMut, BytesMut};
+use sha1::{Digest, Sha1};
+
 // Available if you need it!
 // use serde_bencode
 
+#[derive(Clone)]
 enum Bencoded {
     String(Vec<u8>),
     Integer(i64),
@@ -23,6 +27,43 @@ impl Bencoded {
                 d.iter().map(|(k, v)| (k.clone(), v.to_json())),
             )),
         }
+    }
+
+    fn serialize(&self) -> Vec<u8> {
+        let mut buf = BytesMut::with_capacity(512);
+        match self {
+            Self::String(v) => {
+                buf.put_slice(v.len().to_string().as_bytes());
+                buf.put_u8(b':');
+                buf.put_slice(v);
+            }
+            Self::Integer(i) => {
+                buf.put_u8(b'i');
+                buf.put_slice(i.to_string().as_bytes());
+                buf.put_u8(b'e');
+            }
+            Self::List(l) => {
+                buf.put_u8(b'l');
+                buf.put_slice(&l.iter().flat_map(|b| b.serialize()).collect::<Vec<u8>>());
+                buf.put_u8(b'e');
+            }
+            Self::Dict(d) => {
+                buf.put_u8(b'd');
+                buf.put_slice(
+                    &d.iter()
+                        .flat_map(|(k, v)| {
+                            let mut b = k.len().to_string().as_bytes().to_vec();
+                            b.push(b':');
+                            b.append(&mut k.as_bytes().to_vec());
+                            b.append(&mut v.serialize());
+                            b
+                        })
+                        .collect::<Vec<u8>>(),
+                );
+                buf.put_u8(b'e');
+            }
+        }
+        buf.to_vec()
     }
 }
 
@@ -123,7 +164,7 @@ fn main() {
         }
         "info" => {
             let torrent_path = Path::new(&args[2]);
-            println!("looking at torrent file: {}", torrent_path.display());
+            //eprintln!("looking at torrent file: {}", torrent_path.display());
             let mut file = match File::open(torrent_path) {
                 Err(why) => panic!("couldn't open {}: {}", torrent_path.display(), why),
                 Ok(file) => file,
@@ -132,11 +173,14 @@ fn main() {
                 .metadata()
                 .expect("couldn't read torrent file metadata")
                 .len();
-            eprintln!("torrent file is {} bytes", fsz);
-            let mut cts = Vec::with_capacity(fsz.try_into().expect("couldn't make a buffer big enough to hold entire torrent file"));
+            //eprintln!("torrent file is {} bytes", fsz);
+            let mut cts = Vec::with_capacity(
+                fsz.try_into()
+                    .expect("couldn't make a buffer big enough to hold entire torrent file"),
+            );
             match file.read_to_end(&mut cts) {
                 Ok(0) => panic!("nothing read from torrent file"),
-                Ok(bsz) => eprintln!("read {} bytes into buffer", bsz),
+                Ok(_bsz) => {} //eprintln!("read {} bytes into buffer", bsz),
                 Err(why) => panic!(
                     "error reading torrent file {}: {}",
                     torrent_path.display(),
@@ -146,7 +190,8 @@ fn main() {
             let (decoded_value, _rest) = decode_bencoded_value(&cts);
             let tracker: String;
             let length: i64;
-            match decoded_value {
+            let info_dict: Bencoded;
+            match &decoded_value {
                 Bencoded::Dict(d) => {
                     assert!(
                         d.contains_key("announce"),
@@ -165,6 +210,7 @@ fn main() {
                     }
                     match d.get("info") {
                         Some(Bencoded::Dict(d)) => {
+                            info_dict = Bencoded::Dict(d.clone());
                             match d.get("length") {
                                 Some(Bencoded::Integer(i)) => length = *i,
                                 _ => panic!("info.length is not an integer"),
@@ -177,6 +223,12 @@ fn main() {
             }
             println!("Tracker URL: {}", tracker);
             println!("Length: {}", length);
+            let infodict_ser = info_dict.serialize();
+            //eprintln!("infodict_ser: {}", String::from_utf8_lossy(&infodict_ser));
+            let mut hasher = Sha1::new();
+            hasher.update(infodict_ser);
+            let infohash = hasher.finalize();
+            println!("Info Hash: {}", hex::encode(infohash));
         }
         _ => {
             println!("unknown command: {}", args[1])
