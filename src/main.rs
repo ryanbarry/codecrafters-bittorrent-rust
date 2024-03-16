@@ -190,6 +190,7 @@ fn main() {
             let (decoded_value, _rest) = decode_bencoded_value(&cts);
             let tracker: String;
             let length: i64;
+            let piece_length: i64;
             let info_dict: Bencoded;
             match &decoded_value {
                 Bencoded::Dict(d) => {
@@ -215,6 +216,10 @@ fn main() {
                                 Some(Bencoded::Integer(i)) => length = *i,
                                 _ => panic!("info.length is not an integer"),
                             }
+                            match d.get("piece length") {
+                                Some(Bencoded::Integer(i)) => piece_length = *i,
+                                _ => panic!("info.\"piece length\" is not an integer"),
+                            }
                         }
                         _ => panic!("info is not a dict"),
                     }
@@ -229,6 +234,7 @@ fn main() {
             hasher.update(infodict_ser);
             let infohash = hasher.finalize();
             println!("Info Hash: {}", hex::encode(infohash));
+            println!("Piece Length: {}", piece_length);
         }
         _ => {
             println!("unknown command: {}", args[1])
