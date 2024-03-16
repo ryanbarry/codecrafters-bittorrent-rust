@@ -262,7 +262,7 @@ fn main() {
                 .url()
                 .query()
                 .expect("query parameters were not created");
-            let newq = String::from(q.to_owned() + "&info_hash=" + &ih_urlenc);
+            let newq = q.to_owned() + "&info_hash=" + &ih_urlenc;
             req.url_mut().set_query(Some(&newq));
 
             //eprintln!("request: {:?}", req);
@@ -280,12 +280,11 @@ fn main() {
             let peers: Vec<SocketAddrV4>;
             match announce {
                 Bencoded::Dict(d) => {
-                    match d.get("failure reason") {
-                        Some(Bencoded::String(s)) => panic!(
+                    if let Some(Bencoded::String(s)) = d.get("failure reason") {
+                        panic!(
                             "tracker responded with an error: {}",
                             String::from_utf8_lossy(s)
-                        ),
-                        _ => {}
+                        )
                     }
                     match d.get("peers") {
                         Some(Bencoded::String(s)) => {
@@ -374,7 +373,7 @@ fn main() {
                             }
                             match d.get("pieces") {
                                 Some(Bencoded::String(s)) => {
-                                    pieces = s.chunks_exact(20).map(|v| Vec::from(v)).collect();
+                                    pieces = s.chunks_exact(20).map(Vec::from).collect();
                                 }
                                 _ => panic!("info.pieces is not a string"),
                             }
