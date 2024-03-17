@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
@@ -204,20 +204,20 @@ async fn main() -> anyhow::Result<()> {
         }
         "handshake" => {
             let mi_path = Path::new(&args[2]);
-            let metainf = read_metainfo_file(mi_path).await?;
-            let peer_addr = SocketAddrV4::from_str(&args[3])?;
-            let mut peerconn = TcpStream::connect(peer_addr).await?;
+            let metainf = read_metainfo_file(mi_path).await.context("failed to read metainfo file")?;
+            let peer_addr = SocketAddrV4::from_str(&args[3]).context("failed to parse given peer address")?;
+            let mut peerconn = TcpStream::connect(peer_addr).await.context("failed to connect to peer")?;
             let mut b = BytesMut::with_capacity(68);
             b.put_u8(19);
             b.put_slice(b"BitTorrent protocol");
             b.put_slice(&[0u8; 8]);
-            b.put_slice(&metainf.info.hash()?);
+            b.put_slice(&metainf.info.hash().context("failed creating infohash")?);
             b.put_slice(b"00112233445566778899");
-            peerconn.write_all(&b).await?;
+            peerconn.write_all(&b).await.context("failed to send handshake to peer")?;
 
             b.clear();
             loop {
-                peerconn.readable().await?;
+                peerconn.readable().await.context("failed waiting for data from peer")?;
                 match peerconn.try_read_buf(&mut b) {
                     Ok(0) => {
                         return Err(anyhow::anyhow!("got nothing from peer"));
@@ -228,6 +228,7 @@ async fn main() -> anyhow::Result<()> {
                         return Ok(());
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        eprintln!("false positive from peercon.readable()");
                         continue;
                     }
                     Err(e) => return Err(anyhow!(e).context("some other error from peer")),
