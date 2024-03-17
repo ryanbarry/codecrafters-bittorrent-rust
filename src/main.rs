@@ -1,14 +1,15 @@
 use std::{
     env,
     net::{Ipv4Addr, SocketAddrV4},
-    path::Path,
+    path::Path, str::FromStr, io,
 };
 
-use bytes::BufMut;
+use anyhow::anyhow;
+use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
-use tokio::{fs::File, io::AsyncReadExt};
+use tokio::{fs::File, io::AsyncWriteExt, io::AsyncReadExt, net::TcpStream};
 
 #[derive(Serialize, Deserialize)]
 struct InfoDict {
@@ -201,7 +202,38 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "handshake" => {
-            Ok(())
+            let mi_path = Path::new(&args[2]);
+            let metainf = read_metainfo_file(mi_path).await?;
+            let peer_addr = SocketAddrV4::from_str(&args[3])?;
+            let mut peerconn = TcpStream::connect(peer_addr).await?;
+            let mut b = BytesMut::with_capacity(68);
+            b.put_u8(19);
+            b.put_slice(b"BitTorrent protocol");
+            b.put_slice(&[0u8; 8]);
+            b.put_slice(&metainf.info.hash()?);
+            b.put_slice(b"00112233445566778899");
+            peerconn.write_all(&b).await?;
+
+            eprintln!("sent handshake");
+
+            b.clear();
+            loop {
+                peerconn.readable().await?;
+                match peerconn.try_read_buf(&mut b) {
+                    Ok(0) => {
+                        return Err(anyhow::anyhow!("got nothing from peer"));
+                    },
+                    Ok(n) => {
+                        assert!(n == 68, "got wrong size response: {}", n);
+                        println!("Peer ID: {}", hex::encode(b[48..].to_vec()));
+                        return Ok(());
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        continue;
+                    }
+                    Err(e) => return Err(anyhow!(e).context("some other error from peer")),
+                }
+            }
         }
         _ => {
             anyhow::bail!("unknown command: {}", args[1])
