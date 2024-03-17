@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     env,
     fs::File,
     io::Read,
@@ -39,108 +38,25 @@ struct TrackerError {
 #[derive(Serialize, Deserialize)]
 struct TrackerPeers {
     interval: u64,
-    peers: Vec<u8>,
+    peers: ByteBuf,
+    complete: u64,
+    incomplete: u64,
+    #[serde(rename = "min interval")]
+    min_interval: u64,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(untagged)]
 enum TrackerResponse {
-    TrackerError,
-    TrackerPeers,
-}
-
-#[derive(Clone)]
-enum Bencoded {
-    String(Vec<u8>),
-    Integer(i64),
-    List(Vec<Bencoded>),
-    Dict(BTreeMap<String, Bencoded>),
-}
-
-fn decode_bencoded_value(encoded_value: &[u8]) -> (Bencoded, &[u8]) {
-    // If encoded_value starts with a digit, it's a string
-    let mut chars = encoded_value.iter().peekable();
-    match chars.next() {
-        Some(b'd') => {
-            let mut dict = BTreeMap::new();
-            let mut rest: Vec<u8>;
-            while chars.peek() != Some(&&b'e') {
-                rest = chars.copied().collect::<Vec<u8>>();
-                let (key, r) = decode_bencoded_value(&rest);
-                match key {
-                    Bencoded::String(key) => {
-                        let (val, r) = decode_bencoded_value(r);
-                        dict.insert(String::from_utf8(key).expect("key is valid utf-8"), val);
-                        chars = r.iter().peekable();
-                    }
-                    _ => panic!("bencoded dictionary keys must be strings"),
-                }
-            }
-            chars.next();
-            (
-                Bencoded::Dict(dict),
-                &encoded_value[encoded_value.len() - chars.count()..],
-            )
-        }
-        Some(b'l') => {
-            let mut vals = vec![];
-            let mut rest: Vec<u8>;
-            while chars.peek() != Some(&&b'e') {
-                rest = chars.copied().collect::<Vec<u8>>();
-                let (v, r) = decode_bencoded_value(&rest);
-                vals.push(v);
-                chars = r.iter().peekable();
-            }
-            chars.next();
-            (
-                Bencoded::List(vals),
-                &encoded_value[encoded_value.len() - chars.count()..],
-            )
-        }
-        Some(b'i') => {
-            let numerals: Vec<u8> = chars
-                .map_while(|c| if *c != b'e' { Some(*c) } else { None })
-                .collect();
-            let integer: i64 = String::from_utf8(numerals.clone())
-                .expect("number must be valid utf-8")
-                .parse()
-                .expect("failed to parse numerals into integer");
-            (
-                Bencoded::Integer(integer),
-                &encoded_value[numerals.len() + 2..],
-            )
-        }
-        Some(c) if c.is_ascii_digit() => {
-            // Example: "5:hello" -> "hello"
-            let colon_index = {
-                let mut i = 0;
-                while encoded_value[i] != b':' {
-                    i += 1;
-                }
-                i
-            };
-            let number_string = String::from_utf8(encoded_value[..colon_index].to_vec())
-                .expect("number string must be valid utf-8");
-            let number = number_string.parse::<usize>().unwrap();
-            let bytes = &encoded_value[colon_index + 1..colon_index + 1 + number];
-            (
-                Bencoded::String(bytes.to_vec()),
-                &encoded_value[colon_index + 1 + number..],
-            )
-        }
-        Some(_) | None => {
-            panic!(
-                "Unhandled encoded value: {}",
-                String::from_utf8_lossy(encoded_value)
-            )
-        }
-    }
+    Error(TrackerError),
+    Success(TrackerPeers),
 }
 
 fn convert_bencode_to_json(value: serde_bencode::value::Value) -> anyhow::Result<serde_json::Value> {
     match value {
         serde_bencode::value::Value::Bytes(b) => {
-            let stringified = String::from_utf8(b)?;
-            Ok(serde_json::Value::String(stringified))
+            let stringified = String::from_utf8_lossy(&b);
+            Ok(serde_json::Value::String(stringified.to_string()))
         }
         serde_bencode::value::Value::Int(i) => Ok(serde_json::Value::Number(i.into())),
         serde_bencode::value::Value::List(l) => {
@@ -240,37 +156,28 @@ fn main() -> anyhow::Result<()> {
                 buf.into_inner()
             };
             //eprintln!("got a response: {}", String::from_utf8_lossy(&body));
-            let (announce, _rest) = decode_bencoded_value(&body);
             let peers: Vec<SocketAddrV4>;
-            match announce {
-                Bencoded::Dict(d) => {
-                    if let Some(Bencoded::String(s)) = d.get("failure reason") {
-                        panic!(
-                            "tracker responded with an error: {}",
-                            String::from_utf8_lossy(s)
-                        )
-                    }
-                    match d.get("peers") {
-                        Some(Bencoded::String(s)) => {
-                            peers = s
-                                .chunks(6)
-                                .map(|peer| {
-                                    let mut ipbytes: [u8; 4] = [0; 4];
-                                    ipbytes.copy_from_slice(&peer[0..4]);
-                                    let mut skbytes = [0u8; 2];
-                                    skbytes.copy_from_slice(&peer[4..6]);
-                                    SocketAddrV4::new(
-                                        Ipv4Addr::from(ipbytes),
-                                        u16::from_be_bytes(skbytes),
-                                    )
-                                })
-                                .collect();
-                        }
-                        Some(_) => panic!("tracker response contains peers not encoded as string"),
-                        None => panic!("tracker response does not contain peers key"),
-                    }
+            match serde_bencode::from_bytes(&body) {
+                Ok(TrackerResponse::Error(e)) => panic!("tracker responded with error: {}", e.failure_reason),
+                Ok(TrackerResponse::Success(r)) => {
+                    peers = r.peers
+                         .chunks(6)
+                         .map(|peer| {
+                             let mut ipbytes: [u8; 4] = [0; 4];
+                             ipbytes.copy_from_slice(&peer[0..4]);
+                             let mut skbytes = [0u8; 2];
+                             skbytes.copy_from_slice(&peer[4..6]);
+                             SocketAddrV4::new(
+                                 Ipv4Addr::from(ipbytes),
+                                 u16::from_be_bytes(skbytes),
+                             )
+                         })
+                         .collect();
                 }
-                _ => panic!("got non-dict response from tracker"),
+                Err(e) => {
+                    eprintln!("error reading tracker data, data as json:\n{}", convert_bencode_to_json(serde_bencode::from_bytes(&body).expect("could not deserialize as bencode")).expect("invalid conversion"));
+                    anyhow::bail!("error deserializing tracker response: {}", e)
+                },
             }
             for p in peers.iter() {
                 println!("{}", p);
