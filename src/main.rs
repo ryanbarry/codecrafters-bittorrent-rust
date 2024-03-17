@@ -215,8 +215,6 @@ async fn main() -> anyhow::Result<()> {
             b.put_slice(b"00112233445566778899");
             peerconn.write_all(&b).await?;
 
-            eprintln!("sent handshake");
-
             b.clear();
             loop {
                 peerconn.readable().await?;
@@ -226,7 +224,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Ok(n) => {
                         assert!(n == 68, "got wrong size response: {}", n);
-                        println!("Peer ID: {}", hex::encode(b[48..].to_vec()));
+                        println!("Peer ID: {}", hex::encode(&b[48..]));
                         return Ok(());
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
