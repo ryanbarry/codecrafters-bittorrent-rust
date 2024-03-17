@@ -1,7 +1,5 @@
 use std::{
     env,
-    fs::File,
-    io::Read,
     net::{Ipv4Addr, SocketAddrV4},
     path::Path,
 };
@@ -10,6 +8,7 @@ use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
+use tokio::{fs::File, io::AsyncReadExt};
 
 #[derive(Serialize, Deserialize)]
 struct InfoDict {
@@ -82,8 +81,17 @@ fn convert_bencode_to_json(
     }
 }
 
+async fn read_metainfo_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Metainfo> {
+    let mut file = File::open(path).await?;
+    let fsz = file.metadata().await?.len();
+    let mut contents = Vec::with_capacity(fsz.try_into()?);
+    file.read_to_end(&mut contents).await?;
+    Ok(serde_bencode::from_bytes(&contents)?)
+}
+
 // Usage: your_bittorrent.sh decode "<encoded_value>"
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
     let command = &args[1];
 
@@ -98,29 +106,7 @@ fn main() -> anyhow::Result<()> {
         "peers" => {
             let torrent_path = Path::new(&args[2]);
             //eprintln!("looking at torrent file: {}", torrent_path.display());
-            let mut file = match File::open(torrent_path) {
-                Err(why) => panic!("couldn't open {}: {}", torrent_path.display(), why),
-                Ok(file) => file,
-            };
-            let fsz = file
-                .metadata()
-                .expect("couldn't read torrent file metadata")
-                .len();
-            //eprintln!("torrent file is {} bytes", fsz);
-            let mut cts = Vec::with_capacity(
-                fsz.try_into()
-                    .expect("couldn't make a buffer big enough to hold entire torrent file"),
-            );
-            match file.read_to_end(&mut cts) {
-                Ok(0) => panic!("nothing read from torrent file"),
-                Ok(_bsz) => {} //eprintln!("read {} bytes into buffer", bsz),
-                Err(why) => panic!(
-                    "error reading torrent file {}: {}",
-                    torrent_path.display(),
-                    why
-                ),
-            }
-            let torrent: Metainfo = serde_bencode::from_bytes(&cts)?;
+            let torrent = read_metainfo_file(torrent_path).await?;
             let ih_urlenc = torrent
                 .info
                 .hash()?
@@ -203,23 +189,7 @@ fn main() -> anyhow::Result<()> {
         "info" => {
             let torrent_path = Path::new(&args[2]);
             //eprintln!("looking at torrent file: {}", torrent_path.display());
-            let mut file = match File::open(torrent_path) {
-                Err(why) => panic!("couldn't open {}: {}", torrent_path.display(), why),
-                Ok(file) => file,
-            };
-            let fsz = file.metadata()?.len();
-            //eprintln!("torrent file is {} bytes", fsz);
-            let mut cts = Vec::with_capacity(fsz.try_into()?);
-            match file.read_to_end(&mut cts) {
-                Ok(0) => panic!("nothing read from torrent file"),
-                Ok(_bsz) => {} //eprintln!("read {} bytes into buffer", bsz),
-                Err(why) => panic!(
-                    "error reading torrent file {}: {}",
-                    torrent_path.display(),
-                    why
-                ),
-            }
-            let metainf: Metainfo = serde_bencode::from_bytes(&cts)?;
+            let metainf = read_metainfo_file(torrent_path).await?;
             println!("Tracker URL: {}", metainf.announce);
             println!("Length: {}", metainf.info.length);
             println!("Info Hash: {}", hex::encode(metainf.info.hash()?));
@@ -228,6 +198,9 @@ fn main() -> anyhow::Result<()> {
             for ph in metainf.info.pieces.chunks(20).map(Vec::from) {
                 println!("{}", hex::encode(ph));
             }
+            Ok(())
+        }
+        "handshake" => {
             Ok(())
         }
         _ => {
