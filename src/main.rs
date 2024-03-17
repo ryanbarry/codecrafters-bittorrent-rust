@@ -23,6 +23,14 @@ struct InfoDict {
     length: u64,
 }
 
+impl InfoDict {
+    fn infohash(&self) -> anyhow::Result<[u8; 20]> {
+        let mut hasher = Sha1::new();
+        hasher.update(serde_bencode::to_bytes(&self)?);
+        Ok(hasher.finalize().into())
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Metainfo {
     announce: String,
@@ -110,10 +118,7 @@ fn main() -> anyhow::Result<()> {
                 ),
             }
             let torrent: Metainfo = serde_bencode::from_bytes(&cts)?;
-            let mut hasher = Sha1::new();
-            hasher.update(serde_bencode::to_bytes(&torrent.info)?);
-            let infohash = hasher.finalize();
-            let ih_urlenc = infohash
+            let ih_urlenc = torrent.info.infohash()?
                 .iter()
                 .map(|b| match *b {
                     b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'-' | b'.' | b'_' | b'~' => {
@@ -192,13 +197,11 @@ fn main() -> anyhow::Result<()> {
                 Ok(file) => file,
             };
             let fsz = file
-                .metadata()
-                .expect("couldn't read torrent file metadata")
+                .metadata()?
                 .len();
             //eprintln!("torrent file is {} bytes", fsz);
             let mut cts = Vec::with_capacity(
-                fsz.try_into()
-                    .expect("couldn't make a buffer big enough to hold entire torrent file"),
+                fsz.try_into()?
             );
             match file.read_to_end(&mut cts) {
                 Ok(0) => panic!("nothing read from torrent file"),
@@ -209,13 +212,10 @@ fn main() -> anyhow::Result<()> {
                     why
                 ),
             }
-            let metainf: Metainfo = serde_bencode::from_bytes(&cts).expect("could not deserialize metainfo file");
+            let metainf: Metainfo = serde_bencode::from_bytes(&cts)?;
             println!("Tracker URL: {}", metainf.announce);
             println!("Length: {}", metainf.info.length);
-            let mut hasher = Sha1::new();
-            hasher.update(serde_bencode::to_bytes(&metainf.info).expect("could not serialize info dict for hashing"));
-            let infohash = hasher.finalize();
-            println!("Info Hash: {}", hex::encode(infohash));
+            println!("Info Hash: {}", hex::encode(metainf.info.infohash()?));
             println!("Piece Length: {}", metainf.info.piece_length);
             println!("Piece Hashes:");
             for ph in metainf.info.pieces.chunks(20).map(Vec::from) {
