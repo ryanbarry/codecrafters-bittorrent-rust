@@ -7,7 +7,7 @@ use std::{
     path::Path,
 };
 
-use bytes::{BufMut, BytesMut};
+use bytes::BufMut;
 use serde::{Serialize, Deserialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
@@ -30,51 +30,30 @@ struct Metainfo {
     info: InfoDict,
 }
 
+#[derive(Serialize, Deserialize)]
+struct TrackerError {
+    #[serde(rename = "failure reason")]
+    failure_reason: String
+}
+
+#[derive(Serialize, Deserialize)]
+struct TrackerPeers {
+    interval: u64,
+    peers: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize)]
+enum TrackerResponse {
+    TrackerError,
+    TrackerPeers,
+}
+
 #[derive(Clone)]
 enum Bencoded {
     String(Vec<u8>),
     Integer(i64),
     List(Vec<Bencoded>),
     Dict(BTreeMap<String, Bencoded>),
-}
-
-impl Bencoded {
-    fn serialize(&self) -> Vec<u8> {
-        let mut buf = BytesMut::with_capacity(512);
-        match self {
-            Self::String(v) => {
-                buf.put_slice(v.len().to_string().as_bytes());
-                buf.put_u8(b':');
-                buf.put_slice(v);
-            }
-            Self::Integer(i) => {
-                buf.put_u8(b'i');
-                buf.put_slice(i.to_string().as_bytes());
-                buf.put_u8(b'e');
-            }
-            Self::List(l) => {
-                buf.put_u8(b'l');
-                buf.put_slice(&l.iter().flat_map(|b| b.serialize()).collect::<Vec<u8>>());
-                buf.put_u8(b'e');
-            }
-            Self::Dict(d) => {
-                buf.put_u8(b'd');
-                buf.put_slice(
-                    &d.iter()
-                        .flat_map(|(k, v)| {
-                            let mut b = k.len().to_string().as_bytes().to_vec();
-                            b.push(b':');
-                            b.append(&mut k.as_bytes().to_vec());
-                            b.append(&mut v.serialize());
-                            b
-                        })
-                        .collect::<Vec<u8>>(),
-                );
-                buf.put_u8(b'e');
-            }
-        }
-        buf.to_vec()
-    }
 }
 
 fn decode_bencoded_value(encoded_value: &[u8]) -> (Bencoded, &[u8]) {
@@ -214,44 +193,9 @@ fn main() -> anyhow::Result<()> {
                     why
                 ),
             }
-            let (decoded_value, _rest) = decode_bencoded_value(&cts);
-            let tracker: String;
-            let length: i64;
-            let info_dict: Bencoded;
-            match &decoded_value {
-                Bencoded::Dict(d) => {
-                    assert!(
-                        d.contains_key("announce"),
-                        "torrent file dict must contain announce key"
-                    );
-                    assert!(
-                        d.contains_key("info"),
-                        "torrent file dict must contain info key"
-                    );
-                    match d.get("announce") {
-                        Some(Bencoded::String(s)) => {
-                            tracker = String::from_utf8(s.to_vec())
-                                .expect("announce value must be valid utf-8")
-                        }
-                        _ => panic!("torrent file announce key's value is not a string"),
-                    }
-                    match d.get("info") {
-                        Some(Bencoded::Dict(d)) => {
-                            info_dict = Bencoded::Dict(d.clone());
-                            match d.get("length") {
-                                Some(Bencoded::Integer(i)) => length = *i,
-                                _ => panic!("info.length is not an integer"),
-                            }
-                        }
-                        _ => panic!("torrent file is missing info dict"),
-                    }
-                }
-                _ => panic!("torrent file isn't a bencoded dict"),
-            }
-            let infodict_ser = info_dict.serialize();
-            //eprintln!("infodict_ser: {}", String::from_utf8_lossy(&infodict_ser));
+            let torrent: Metainfo = serde_bencode::from_bytes(&cts)?;
             let mut hasher = Sha1::new();
-            hasher.update(infodict_ser);
+            hasher.update(serde_bencode::to_bytes(&torrent.info)?);
             let infohash = hasher.finalize();
             let ih_urlenc = infohash
                 .iter()
@@ -264,13 +208,13 @@ fn main() -> anyhow::Result<()> {
                 .collect::<String>();
             //eprintln!("ih_urlenc: {}", ih_urlenc);
 
-            eprintln!("fetching peers from tracker at {}", tracker);
+            eprintln!("fetching peers from tracker at {}", torrent.announce);
             let tracker_client = reqwest::blocking::Client::new();
             let mut req = tracker_client
-                .get(tracker)
+                .get(torrent.announce)
                 .query(&[
                     ("peer_id", "00112233445566778899"),
-                    ("left", &length.to_string()),
+                    ("left", &torrent.info.length.to_string()),
                     ("port", "6881"),
                     ("uploaded", "0"),
                     ("downloaded", "0"),
