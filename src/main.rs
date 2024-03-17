@@ -21,7 +21,7 @@ struct InfoDict {
 }
 
 impl InfoDict {
-    fn infohash(&self) -> anyhow::Result<[u8; 20]> {
+    fn hash(&self) -> anyhow::Result<[u8; 20]> {
         let mut hasher = Sha1::new();
         hasher.update(serde_bencode::to_bytes(&self)?);
         Ok(hasher.finalize().into())
@@ -123,7 +123,7 @@ fn main() -> anyhow::Result<()> {
             let torrent: Metainfo = serde_bencode::from_bytes(&cts)?;
             let ih_urlenc = torrent
                 .info
-                .infohash()?
+                .hash()?
                 .iter()
                 .map(|b| match *b {
                     b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'-' | b'.' | b'_' | b'~' => {
@@ -222,7 +222,7 @@ fn main() -> anyhow::Result<()> {
             let metainf: Metainfo = serde_bencode::from_bytes(&cts)?;
             println!("Tracker URL: {}", metainf.announce);
             println!("Length: {}", metainf.info.length);
-            println!("Info Hash: {}", hex::encode(metainf.info.infohash()?));
+            println!("Info Hash: {}", hex::encode(metainf.info.hash()?));
             println!("Piece Length: {}", metainf.info.piece_length);
             println!("Piece Hashes:");
             for ph in metainf.info.pieces.chunks(20).map(Vec::from) {
