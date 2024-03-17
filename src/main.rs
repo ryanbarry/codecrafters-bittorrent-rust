@@ -7,7 +7,7 @@ use std::{
 };
 
 use bytes::BufMut;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
 
@@ -40,7 +40,7 @@ struct Metainfo {
 #[derive(Serialize, Deserialize)]
 struct TrackerError {
     #[serde(rename = "failure reason")]
-    failure_reason: String
+    failure_reason: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -60,22 +60,27 @@ enum TrackerResponse {
     Success(TrackerPeers),
 }
 
-fn convert_bencode_to_json(value: serde_bencode::value::Value) -> anyhow::Result<serde_json::Value> {
+fn convert_bencode_to_json(
+    value: serde_bencode::value::Value,
+) -> anyhow::Result<serde_json::Value> {
     match value {
         serde_bencode::value::Value::Bytes(b) => {
             let stringified = String::from_utf8_lossy(&b);
             Ok(serde_json::Value::String(stringified.to_string()))
         }
         serde_bencode::value::Value::Int(i) => Ok(serde_json::Value::Number(i.into())),
-        serde_bencode::value::Value::List(l) => {
-            Ok(serde_json::Value::Array(l.iter().map(|v| convert_bencode_to_json(v.clone()).expect("failed conversion")).collect()))
-        }
+        serde_bencode::value::Value::List(l) => Ok(serde_json::Value::Array(
+            l.iter()
+                .map(|v| convert_bencode_to_json(v.clone()).expect("failed conversion"))
+                .collect(),
+        )),
         serde_bencode::value::Value::Dict(d) => {
             Ok(serde_json::map::Map::from_iter(d.iter().map(|(k, v)| {
                 let key = String::from_utf8(k.to_vec()).expect("dict keys must be utf-8");
                 let val = convert_bencode_to_json(v.clone()).expect("failed converting dict value");
                 (key, val)
-            })).into())
+            }))
+            .into())
         }
     }
 }
@@ -87,7 +92,8 @@ fn main() -> anyhow::Result<()> {
 
     match command.trim() {
         "decode" => {
-            let deser: serde_bencode::value::Value = serde_bencode::from_str(&args[2]).expect("could not deserialize value");
+            let deser: serde_bencode::value::Value =
+                serde_bencode::from_str(&args[2]).expect("could not deserialize value");
             let json = convert_bencode_to_json(deser)?;
             println!("{}", json);
             Ok(())
@@ -118,7 +124,9 @@ fn main() -> anyhow::Result<()> {
                 ),
             }
             let torrent: Metainfo = serde_bencode::from_bytes(&cts)?;
-            let ih_urlenc = torrent.info.infohash()?
+            let ih_urlenc = torrent
+                .info
+                .infohash()?
                 .iter()
                 .map(|b| match *b {
                     b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'-' | b'.' | b'_' | b'~' => {
@@ -141,8 +149,7 @@ fn main() -> anyhow::Result<()> {
                     ("downloaded", "0"),
                     ("compact", "1"),
                 ])
-                .build()
-                .expect("failed to create valid peers request");
+                .build()?;
             let q = req
                 .url()
                 .query()
@@ -163,26 +170,33 @@ fn main() -> anyhow::Result<()> {
             //eprintln!("got a response: {}", String::from_utf8_lossy(&body));
             let peers: Vec<SocketAddrV4>;
             match serde_bencode::from_bytes(&body) {
-                Ok(TrackerResponse::Error(e)) => panic!("tracker responded with error: {}", e.failure_reason),
+                Ok(TrackerResponse::Error(e)) => {
+                    panic!("tracker responded with error: {}", e.failure_reason)
+                }
                 Ok(TrackerResponse::Success(r)) => {
-                    peers = r.peers
-                         .chunks(6)
-                         .map(|peer| {
-                             let mut ipbytes: [u8; 4] = [0; 4];
-                             ipbytes.copy_from_slice(&peer[0..4]);
-                             let mut skbytes = [0u8; 2];
-                             skbytes.copy_from_slice(&peer[4..6]);
-                             SocketAddrV4::new(
-                                 Ipv4Addr::from(ipbytes),
-                                 u16::from_be_bytes(skbytes),
-                             )
-                         })
-                         .collect();
+                    peers = r
+                        .peers
+                        .chunks(6)
+                        .map(|peer| {
+                            let mut ipbytes: [u8; 4] = [0; 4];
+                            ipbytes.copy_from_slice(&peer[0..4]);
+                            let mut skbytes = [0u8; 2];
+                            skbytes.copy_from_slice(&peer[4..6]);
+                            SocketAddrV4::new(Ipv4Addr::from(ipbytes), u16::from_be_bytes(skbytes))
+                        })
+                        .collect();
                 }
                 Err(e) => {
-                    eprintln!("error reading tracker data, data as json:\n{}", convert_bencode_to_json(serde_bencode::from_bytes(&body).expect("could not deserialize as bencode")).expect("invalid conversion"));
+                    eprintln!(
+                        "error reading tracker data, data as json:\n{}",
+                        convert_bencode_to_json(
+                            serde_bencode::from_bytes(&body)
+                                .expect("could not deserialize as bencode")
+                        )
+                        .expect("invalid conversion")
+                    );
                     anyhow::bail!("error deserializing tracker response: {}", e)
-                },
+                }
             }
             for p in peers.iter() {
                 println!("{}", p);
@@ -196,13 +210,9 @@ fn main() -> anyhow::Result<()> {
                 Err(why) => panic!("couldn't open {}: {}", torrent_path.display(), why),
                 Ok(file) => file,
             };
-            let fsz = file
-                .metadata()?
-                .len();
+            let fsz = file.metadata()?.len();
             //eprintln!("torrent file is {} bytes", fsz);
-            let mut cts = Vec::with_capacity(
-                fsz.try_into()?
-            );
+            let mut cts = Vec::with_capacity(fsz.try_into()?);
             match file.read_to_end(&mut cts) {
                 Ok(0) => panic!("nothing read from torrent file"),
                 Ok(_bsz) => {} //eprintln!("read {} bytes into buffer", bsz),
