@@ -11,9 +11,6 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
 
-// Available if you need it!
-use serde_bencode;
-
 #[derive(Serialize, Deserialize)]
 struct InfoDict {
     name: String,
