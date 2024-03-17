@@ -35,6 +35,16 @@ struct Metainfo {
     info: InfoDict,
 }
 
+impl Metainfo {
+    async fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+        let mut file = File::open(path).await?;
+        let fsz = file.metadata().await?.len();
+        let mut contents = Vec::with_capacity(fsz.try_into()?);
+        file.read_to_end(&mut contents).await?;
+        Ok(serde_bencode::from_bytes(&contents)?)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct TrackerError {
     #[serde(rename = "failure reason")]
@@ -81,14 +91,6 @@ fn convert_bencode_to_json(
             .into())
         }
     }
-}
-
-async fn read_metainfo_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Metainfo> {
-    let mut file = File::open(path).await?;
-    let fsz = file.metadata().await?.len();
-    let mut contents = Vec::with_capacity(fsz.try_into()?);
-    file.read_to_end(&mut contents).await?;
-    Ok(serde_bencode::from_bytes(&contents)?)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -155,9 +157,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "peers" => {
-            let torrent_path = Path::new(&args[2]);
-            //eprintln!("looking at torrent file: {}", torrent_path.display());
-            let torrent = read_metainfo_file(torrent_path).await?;
+            let torrent = Metainfo::from_file(&args[2]).await?;
             let ih_urlenc = torrent
                 .info
                 .hash()?
@@ -238,9 +238,9 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "info" => {
-            let torrent_path = Path::new(&args[2]);
-            //eprintln!("looking at torrent file: {}", torrent_path.display());
-            let metainf = read_metainfo_file(torrent_path).await?;
+            let metainf = Metainfo::from_file(&args[2])
+                .await
+                .context("failed to read metainfo file")?;
             println!("Tracker URL: {}", metainf.announce);
             println!("Length: {}", metainf.info.length);
             println!("Info Hash: {}", hex::encode(metainf.info.hash()?));
@@ -252,8 +252,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "handshake" => {
-            let mi_path = Path::new(&args[2]);
-            let metainf = read_metainfo_file(mi_path)
+            let metainf = Metainfo::from_file(&args[2])
                 .await
                 .context("failed to read metainfo file")?;
             let peer_addr =
