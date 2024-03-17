@@ -39,20 +39,6 @@ enum Bencoded {
 }
 
 impl Bencoded {
-    fn to_json(&self) -> serde_json::Value {
-        match self {
-            Self::String(v) => serde_json::Value::String(
-                String::from_utf8(v.to_vec())
-                    .expect("bencoded string can only convert to json if utf-8"),
-            ),
-            Self::Integer(i) => serde_json::Value::Number((*i).into()),
-            Self::List(l) => serde_json::Value::Array(l.iter().map(|e| e.to_json()).collect()),
-            Self::Dict(d) => serde_json::Value::Object(serde_json::Map::from_iter(
-                d.iter().map(|(k, v)| (k.clone(), v.to_json())),
-            )),
-        }
-    }
-
     fn serialize(&self) -> Vec<u8> {
         let mut buf = BytesMut::with_capacity(512);
         match self {
@@ -171,20 +157,37 @@ fn decode_bencoded_value(encoded_value: &[u8]) -> (Bencoded, &[u8]) {
     }
 }
 
+fn convert_bencode_to_json(value: serde_bencode::value::Value) -> anyhow::Result<serde_json::Value> {
+    match value {
+        serde_bencode::value::Value::Bytes(b) => {
+            let stringified = String::from_utf8(b)?;
+            Ok(serde_json::Value::String(stringified))
+        }
+        serde_bencode::value::Value::Int(i) => Ok(serde_json::Value::Number(i.into())),
+        serde_bencode::value::Value::List(l) => {
+            Ok(serde_json::Value::Array(l.iter().map(|v| convert_bencode_to_json(v.clone()).expect("failed conversion")).collect()))
+        }
+        serde_bencode::value::Value::Dict(d) => {
+            Ok(serde_json::map::Map::from_iter(d.iter().map(|(k, v)| {
+                let key = String::from_utf8(k.to_vec()).expect("dict keys must be utf-8");
+                let val = convert_bencode_to_json(v.clone()).expect("failed converting dict value");
+                (key, val)
+            })).into())
+        }
+    }
+}
+
 // Usage: your_bittorrent.sh decode "<encoded_value>"
-fn main() {
+fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
     let command = &args[1];
 
     match command.trim() {
         "decode" => {
-            let encoded_value = &args[2]
-                .chars()
-                .map(|c| c.try_into().expect("utf-8"))
-                .collect::<Vec<u8>>();
-            let (decoded_value, rest) = decode_bencoded_value(encoded_value);
-            println!("{}", decoded_value.to_json());
-            eprintln!("rest: {}", String::from_utf8_lossy(rest));
+            let deser: serde_bencode::value::Value = serde_bencode::from_str(&args[2]).expect("could not deserialize value");
+            let json = convert_bencode_to_json(deser)?;
+            println!("{}", json);
+            Ok(())
         }
         "peers" => {
             let torrent_path = Path::new(&args[2]);
@@ -328,6 +331,7 @@ fn main() {
             for p in peers.iter() {
                 println!("{}", p);
             }
+            Ok(())
         }
         "info" => {
             let torrent_path = Path::new(&args[2]);
@@ -366,9 +370,10 @@ fn main() {
             for ph in metainf.info.pieces.chunks(20).map(Vec::from) {
                 println!("{}", hex::encode(ph));
             }
+            Ok(())
         }
         _ => {
-            println!("unknown command: {}", args[1])
+            anyhow::bail!("unknown command: {}", args[1])
         }
     }
 }
