@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context};
-use bytes::{BufMut, BytesMut};
+use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
@@ -89,6 +89,55 @@ async fn read_metainfo_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Metainfo>
     let mut contents = Vec::with_capacity(fsz.try_into()?);
     file.read_to_end(&mut contents).await?;
     Ok(serde_bencode::from_bytes(&contents)?)
+}
+
+#[derive(Deserialize, Serialize)]
+struct PeerHandshake {
+    version: u8,
+    proto: [u8; 19],
+    reserved: [u8; 8],
+    info_hash: [u8; 20],
+    peer_id: [u8; 20],
+}
+
+impl PeerHandshake {
+    fn new(info_hash: [u8; 20], peer_id: [u8; 20]) -> Self {
+        PeerHandshake {
+            version: 19,
+            proto: *b"BitTorrent protocol",
+            reserved: [0; 8],
+            info_hash,
+            peer_id,
+        }
+    }
+
+    fn to_bytes(&self) -> [u8; 68] {
+        let mut buf = [0u8; 68];
+        buf[0] = self.version;
+        buf[1..20].copy_from_slice(&self.proto);
+        // skipping reserved bytes, they're already zeroed
+        buf[28..48].copy_from_slice(&self.info_hash);
+        buf[48..68].copy_from_slice(&self.peer_id);
+        buf
+    }
+
+    fn from_bytes(buf: &[u8]) -> Self {
+        let mut proto = [0; 19];
+        proto.copy_from_slice(&buf[1..20]);
+        let mut reserved = [0; 8];
+        reserved.copy_from_slice(&buf[20..28]);
+        let mut info_hash = [0; 20];
+        info_hash.copy_from_slice(&buf[28..48]);
+        let mut peer_id = [0; 20];
+        peer_id.copy_from_slice(&buf[48..68]);
+        PeerHandshake {
+            version: buf[0],
+            proto,
+            reserved,
+            info_hash,
+            peer_id,
+        }
+    }
 }
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
@@ -204,28 +253,39 @@ async fn main() -> anyhow::Result<()> {
         }
         "handshake" => {
             let mi_path = Path::new(&args[2]);
-            let metainf = read_metainfo_file(mi_path).await.context("failed to read metainfo file")?;
-            let peer_addr = SocketAddrV4::from_str(&args[3]).context("failed to parse given peer address")?;
-            let mut peerconn = TcpStream::connect(peer_addr).await.context("failed to connect to peer")?;
-            let mut b = BytesMut::with_capacity(68);
-            b.put_u8(19);
-            b.put_slice(b"BitTorrent protocol");
-            b.put_slice(&[0u8; 8]);
-            b.put_slice(&metainf.info.hash().context("failed creating infohash")?);
-            b.put_slice(b"00112233445566778899");
-            peerconn.write_all(&b).await.context("failed to send handshake to peer")?;
+            let metainf = read_metainfo_file(mi_path)
+                .await
+                .context("failed to read metainfo file")?;
+            let peer_addr =
+                SocketAddrV4::from_str(&args[3]).context("failed to parse given peer address")?;
+            let mut peerconn = TcpStream::connect(peer_addr)
+                .await
+                .context("failed to connect to peer")?;
+            let my_hand = PeerHandshake::new(
+                metainf.info.hash().context("failed creating infohash")?,
+                *b"00112233445566778899",
+            );
+            peerconn
+                .write_all(&my_hand.to_bytes())
+                .await
+                .context("failed to send handshake to peer")?;
 
-            b.clear();
+            let mut b = Vec::with_capacity(512);
             loop {
-                peerconn.readable().await.context("failed waiting for data from peer")?;
+                b.clear();
+                peerconn
+                    .readable()
+                    .await
+                    .context("failed waiting for data from peer")?;
                 match peerconn.try_read_buf(&mut b) {
                     Ok(0) => {
                         return Err(anyhow::anyhow!("got nothing from peer"));
                     }
                     Ok(n) => {
                         assert!(n == 68, "got wrong size response: {}", n);
-                        println!("Peer ID: {}", hex::encode(&b[48..]));
-                        return Ok(());
+                        let their_hand = PeerHandshake::from_bytes(&b);
+                        println!("Peer ID: {}", hex::encode(their_hand.peer_id));
+                        break;
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         eprintln!("false positive from peercon.readable()");
@@ -234,6 +294,7 @@ async fn main() -> anyhow::Result<()> {
                     Err(e) => return Err(anyhow!(e).context("some other error from peer")),
                 }
             }
+            Ok(())
         }
         _ => {
             anyhow::bail!("unknown command: {}", args[1])
