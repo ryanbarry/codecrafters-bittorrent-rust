@@ -142,6 +142,77 @@ impl PeerHandshake {
     }
 }
 
+#[derive(Debug)]
+enum PeerMessage {
+    Choke {},
+    Unchoke {},
+    Interested {},
+    NotInterested {},
+    Have { index: u32 },
+    Bitfield { sent_indices: ByteBuf },
+    Request { index: u32, begin: u32, length: u32 },
+    Piece { index: u32, begin: u32, piece: ByteBuf },
+    Cancel { index: u32, begin: u32, length: u32 },
+}
+
+impl PeerMessage {
+    fn from_bytes(buf: &[u8]) -> anyhow::Result<Self> {
+        match buf[0] {
+            0 => {
+                Ok(Self::Choke {  })
+            }
+            1 => {
+                Ok(Self::Unchoke {  })
+            }
+            2 => {
+                Ok(Self::Interested {  })
+            }
+            3 => {
+                Ok(Self::NotInterested {  })
+            }
+            4 => {
+                if buf.len() != 5 {
+                    return Err(anyhow!("got wrong number of bytes for PeerMessage::Have: {}", buf.len()));
+                }
+                Ok(Self::Have { index: u32::from_be_bytes(buf[1..5].try_into()?) })
+            }
+            5 => {
+                Ok(Self::Bitfield { sent_indices: ByteBuf::from(&buf[1..]) })
+            }
+            6 => {
+                Ok(Self::Request { index: u32::from_be_bytes(buf[1..5].try_into()?),
+                                   begin: u32::from_be_bytes(buf[5..9].try_into()?),
+                                   length: u32::from_be_bytes(buf[9..13].try_into()?), })
+            }
+            7 => {
+                Ok(Self::Piece { index: u32::from_be_bytes(buf[1..5].try_into()?),
+                                 begin: u32::from_be_bytes(buf[5..9].try_into()?),
+                                 piece: ByteBuf::from(&buf[9..]), })
+            }
+            8 => {
+                Ok(Self::Cancel { index: u32::from_be_bytes(buf[1..5].try_into()?),
+                                  begin: u32::from_be_bytes(buf[5..9].try_into()?),
+                                  length: u32::from_be_bytes(buf[9..13].try_into()?), })
+            }
+            _ => Err(anyhow!("got unexpected PeerMessage type: {}", buf[0])),
+        }
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        match &self {
+            Self::Choke{} => { vec![0] },
+            Self::Unchoke{} => { vec![1] },
+            Self::Interested{} => { vec![2] },
+            Self::NotInterested{} => { vec![3] },
+            Self::Have{ index } => { [4].iter().chain(index.to_be_bytes().iter()).copied().collect() },
+            Self::Bitfield{ sent_indices } => { [5].iter().chain(sent_indices.iter()).copied().collect() },
+            Self::Request{ index, begin, length } => { [6].iter().chain(index.to_be_bytes().iter()).chain(begin.to_be_bytes().iter()).chain(length.to_be_bytes().iter()).copied().collect() },
+            Self::Piece{ index, begin, piece } => { [7].iter().chain(index.to_be_bytes().iter()).chain(begin.to_be_bytes().iter()).chain(piece.iter()).copied().collect() },
+            Self::Cancel{ index, begin, length } => { [8].iter().chain(index.to_be_bytes().iter()).chain(begin.to_be_bytes().iter()).chain(length.to_be_bytes().iter()).copied().collect() },
+        }
+    }
+}
+
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -293,6 +364,159 @@ async fn main() -> anyhow::Result<()> {
                     Err(e) => return Err(anyhow!(e).context("some other error from peer")),
                 }
             }
+            Ok(())
+        }
+        "download_piece" => {
+            assert_eq!(args[2], "-o".to_string(), "output must be specified with -o <filepath> as 2nd & 3rd args");
+
+            let outfile = &args[3];
+            let mi_file = &args[4];
+            let piece_idx = &args[5];
+
+            let metainf = Metainfo::from_file(mi_file)
+                .await
+                .context("failed to read metainfo file")?;
+
+            // tracker contact
+
+            let ih_urlenc = metainf
+                .info
+                .hash()?
+                .iter()
+                .map(|b| match *b {
+                    b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'-' | b'.' | b'_' | b'~' => {
+                        format!("{}", *b as char)
+                    }
+                    _ => format!("%{:02X}", b),
+                })
+                .collect::<String>();
+            //eprintln!("ih_urlenc: {}", ih_urlenc);
+
+            eprintln!("fetching peers from tracker at {}", metainf.announce);
+            let tracker_client = reqwest::blocking::Client::new();
+            let mut req = tracker_client
+                .get(metainf.announce)
+                .query(&[
+                    ("peer_id", "00112233445566778899"),
+                    ("left", &metainf.info.length.to_string()),
+                    ("port", "6881"),
+                    ("uploaded", "0"),
+                    ("downloaded", "0"),
+                    ("compact", "1"),
+                ])
+                .build()?;
+            let q = req
+                .url()
+                .query()
+                .expect("query parameters were not created");
+            let newq = q.to_owned() + "&info_hash=" + &ih_urlenc;
+            req.url_mut().set_query(Some(&newq));
+
+            let mut res = tracker_client
+                .execute(req)
+                .expect("failed to get from tracker");
+            let body = {
+                let mut buf = vec![].writer();
+                res.copy_to(&mut buf)
+                    .expect("could not read response from tracker");
+                buf.into_inner()
+            };
+            let peers: Vec<SocketAddrV4>;
+            match serde_bencode::from_bytes(&body) {
+                Ok(TrackerResponse::Error(e)) => {
+                    panic!("tracker responded with error: {}", e.failure_reason)
+                }
+                Ok(TrackerResponse::Success(r)) => {
+                    peers = r
+                        .peers
+                        .chunks(6)
+                        .map(|peer| {
+                            let mut ipbytes: [u8; 4] = [0; 4];
+                            ipbytes.copy_from_slice(&peer[0..4]);
+                            let mut skbytes = [0u8; 2];
+                            skbytes.copy_from_slice(&peer[4..6]);
+                            SocketAddrV4::new(Ipv4Addr::from(ipbytes), u16::from_be_bytes(skbytes))
+                        })
+                        .collect();
+                }
+                Err(e) => {
+                    eprintln!(
+                        "error reading tracker data, data as json:\n{}",
+                        convert_bencode_to_json(
+                            serde_bencode::from_bytes(&body)
+                                .expect("could not deserialize as bencode")
+                        )
+                        .expect("invalid conversion")
+                    );
+                    anyhow::bail!("error deserializing tracker response: {}", e)
+                }
+            }
+
+            // handshake begin
+
+            let mut peerconn = TcpStream::connect(peers[0])
+                .await
+                .context("failed to connect to peer")?;
+            let my_hand = PeerHandshake::new(
+                metainf.info.hash().context("failed creating infohash")?,
+                *b"00112233445566778899",
+            );
+            peerconn
+                .write_all(&my_hand.to_bytes())
+                .await
+                .context("failed to send handshake to peer")?;
+
+            let mut b = Vec::with_capacity(512);
+            loop {
+                b.clear();
+                peerconn
+                    .readable()
+                    .await
+                    .context("failed waiting for data from peer")?;
+                match peerconn.try_read_buf(&mut b) {
+                    Ok(0) => {
+                        return Err(anyhow::anyhow!("got nothing from peer"));
+                    }
+                    Ok(n) => {
+                        assert!(n == 68, "got wrong size response: {}", n);
+                        let their_hand = PeerHandshake::from_bytes(&b);
+                        println!("Peer ID: {}", hex::encode(their_hand.peer_id));
+                        break;
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        eprintln!("false positive from peercon.readable()");
+                        continue;
+                    }
+                    Err(e) => return Err(anyhow!(e).context("some other error from peer")),
+                }
+            }
+
+            // peer messaging
+            loop {
+                b.clear();
+                peerconn.readable().await.context("failed waiting for new messages from peer")?;
+                match peerconn.try_read_buf(&mut b) {
+                    Ok(0) => {
+                        return Err(anyhow!("got nothing from peer, expected message"));
+                    }
+                    Ok(_n) => {
+                        let maybe_msg = PeerMessage::from_bytes(&b);
+                        if let Err(e) = maybe_msg {
+                            anyhow::bail!(e.context("failed to deserialize peer message"));
+                        }
+
+                        let msg = maybe_msg.unwrap();
+                        println!("got message from peer: {:?}", msg);
+                        break;
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        eprintln!("false positive from peercon.readable() while waiting for new messages");
+                        continue;
+                    }
+                    Err(e) => return Err(anyhow!(e).context("some other error when reading peer message")),
+                }
+            }
+
             Ok(())
         }
         _ => {
