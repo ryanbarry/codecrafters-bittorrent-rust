@@ -1,7 +1,8 @@
 use std::{
-    env,
+    env, io,
     net::{Ipv4Addr, SocketAddrV4},
-    path::Path, str::FromStr, io,
+    path::Path,
+    str::FromStr,
 };
 
 use anyhow::anyhow;
@@ -9,7 +10,7 @@ use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
-use tokio::{fs::File, io::AsyncWriteExt, io::AsyncReadExt, net::TcpStream};
+use tokio::{fs::File, io::AsyncReadExt, io::AsyncWriteExt, net::TcpStream};
 
 #[derive(Serialize, Deserialize)]
 struct InfoDict {
@@ -222,7 +223,7 @@ async fn main() -> anyhow::Result<()> {
                 match peerconn.try_read_buf(&mut b) {
                     Ok(0) => {
                         return Err(anyhow::anyhow!("got nothing from peer"));
-                    },
+                    }
                     Ok(n) => {
                         assert!(n == 68, "got wrong size response: {}", n);
                         println!("Peer ID: {}", hex::encode(b[48..].to_vec()));
