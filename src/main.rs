@@ -275,6 +275,7 @@ impl PeerMessage {
 enum PeerSMState {
     Start,
     Alive,
+    Waiting(u32),
 }
 
 #[allow(dead_code)]
@@ -298,6 +299,8 @@ struct PeerState {
 //   decode handshake
 // alive
 //   wait for at least 4 bytes (an i32be)
+//   move into waiting(i32be)
+// waiting
 //   wait for that many bytes
 //   decode message
 //
@@ -327,66 +330,74 @@ impl PeerState {
         })
     }
 
-    async fn poll(&self) {
-        let mut b = Vec::with_capacity(512);
+    async fn poll(&mut self) {
         loop {
-            b.clear();
-            self.conn
-                .readable()
-                .await
-                .expect("failed waiting for data from peer");
-            match self.conn.try_read_buf(&mut b) {
-                Ok(0) => {
-                    panic!("got nothing from peer");
-                }
-                Ok(n) => {
-                    assert!(
-                        n == 68,
-                        "got wrong size response: {}\nbuf:\n{}",
-                        n,
-                        hexedit(b)
-                    );
-                    let their_hand = PeerHandshake::from_bytes(&b);
-                    println!("Peer ID: {}", hex::encode(their_hand.peer_id));
-                    break;
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    eprintln!("false positive from peercon.readable()");
-                    continue;
-                }
-                Err(e) => panic!("some other error from peer: {}", e),
-            }
-        }
-
-        // peer messaging
-        loop {
-            b.clear();
-            self.conn
-                .readable()
-                .await
-                .expect("failed waiting for new messages from peer");
-            match self.conn.try_read_buf(&mut b) {
-                Ok(0) => {
-                    panic!("got nothing from peer, expected message");
-                }
-                Ok(_n) => {
-                    let maybe_msg = PeerMessage::from_bytes(&b);
-                    if let Err(e) = maybe_msg {
-                        panic!("failed to deserialize peer message: {}", e);
+            loop {
+                self.conn
+                    .readable()
+                    .await
+                    .expect("failed waiting for data from peer");
+                match self.conn.try_read_buf(&mut self.recv_buf) {
+                    Ok(0) => {
+                        eprintln!("got 0 bytes");
                     }
+                    Ok(n) => {
+                        eprintln!("got {} bytes from peer", n);
+                        break;
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        eprintln!("false positive from peercon.readable()");
+                        continue;
+                    }
+                    Err(e) => panic!("some other error from peer: {}", e),
+                }
+            }
 
-                    let msg = maybe_msg.unwrap();
-                    println!("got message from peer: {:?}", msg);
-                    break;
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    eprintln!(
-                        "false positive from peercon.readable() while waiting for new messages"
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    panic!("some other error when reading peer message: {}", e);
+            loop {
+                match self.machine {
+                    PeerSMState::Start => {
+                        if self.recv_buf.len() >= 68 {
+                            let new_buf = self.recv_buf.split_off(68);
+                            let hs_bytes = &self.recv_buf;
+                            let their_hand = PeerHandshake::from_bytes(&hs_bytes);
+                            self.recv_buf = new_buf;
+                            eprintln!("Peer ID: {}", hex::encode(their_hand.peer_id));
+                            self.machine = PeerSMState::Alive;
+                        } else {
+                            eprintln!("not enough bytes to start");
+                            break;
+                        }
+                    }
+                    PeerSMState::Alive => {
+                        if self.recv_buf.len() >= 4 {
+                            let new_buf = self.recv_buf.split_off(4);
+                            let mut msglen: [u8; 4] = [0u8; 4];
+                            msglen.copy_from_slice(&self.recv_buf[..4]);
+                            self.recv_buf = new_buf;
+                            let need = u32::from_be_bytes(msglen);
+                            self.machine = PeerSMState::Waiting(need);
+                        } else {
+                            eprintln!("not enough bytes to decode msglen");
+                            break;
+                        }
+                    }
+                    PeerSMState::Waiting(need) => {
+                        if self.recv_buf.len() >= need.try_into().expect("can't compare buffer size") {
+                            let new_buf = self.recv_buf.split_off(need.try_into().expect("can't split buffer at this size"));
+                            let maybe_msg = PeerMessage::from_bytes(&self.recv_buf);
+                            self.recv_buf = new_buf;
+
+                            if let Err(e) = maybe_msg {
+                                panic!("failed to deserialize peer message: {}", e);
+                            }
+
+                            let msg = maybe_msg.unwrap();
+                            eprintln!("got message from peer: {:?}", msg);
+                        } else {
+                            eprintln!("not enough bytes for the message");
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -666,7 +677,7 @@ async fn main() -> anyhow::Result<()> {
 
             // handshake begin
 
-            let peer = PeerState::connect(peers[0], metainf.info.hash()?).await?;
+            let mut peer = PeerState::connect(peers[0], metainf.info.hash()?).await?;
             peer.poll().await;
 
             Ok(())
