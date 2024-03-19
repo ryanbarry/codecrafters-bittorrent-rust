@@ -143,74 +143,205 @@ impl PeerHandshake {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum PeerMessage {
     Choke {},
     Unchoke {},
     Interested {},
     NotInterested {},
-    Have { index: u32 },
-    Bitfield { sent_indices: ByteBuf },
-    Request { index: u32, begin: u32, length: u32 },
-    Piece { index: u32, begin: u32, piece: ByteBuf },
-    Cancel { index: u32, begin: u32, length: u32 },
+    Have {
+        index: u32,
+    },
+    Bitfield {
+        sent_indices: ByteBuf,
+    },
+    Request {
+        index: u32,
+        begin: u32,
+        length: u32,
+    },
+    Piece {
+        index: u32,
+        begin: u32,
+        piece: ByteBuf,
+    },
+    Cancel {
+        index: u32,
+        begin: u32,
+        length: u32,
+    },
 }
 
 impl PeerMessage {
     fn from_bytes(buf: &[u8]) -> anyhow::Result<Self> {
         match buf[0] {
-            0 => {
-                Ok(Self::Choke {  })
-            }
-            1 => {
-                Ok(Self::Unchoke {  })
-            }
-            2 => {
-                Ok(Self::Interested {  })
-            }
-            3 => {
-                Ok(Self::NotInterested {  })
-            }
+            0 => Ok(Self::Choke {}),
+            1 => Ok(Self::Unchoke {}),
+            2 => Ok(Self::Interested {}),
+            3 => Ok(Self::NotInterested {}),
             4 => {
                 if buf.len() != 5 {
-                    return Err(anyhow!("got wrong number of bytes for PeerMessage::Have: {}", buf.len()));
+                    return Err(anyhow!(
+                        "got wrong number of bytes for PeerMessage::Have: {}",
+                        buf.len()
+                    ));
                 }
-                Ok(Self::Have { index: u32::from_be_bytes(buf[1..5].try_into()?) })
+                Ok(Self::Have {
+                    index: u32::from_be_bytes(buf[1..5].try_into()?),
+                })
             }
-            5 => {
-                Ok(Self::Bitfield { sent_indices: ByteBuf::from(&buf[1..]) })
-            }
-            6 => {
-                Ok(Self::Request { index: u32::from_be_bytes(buf[1..5].try_into()?),
-                                   begin: u32::from_be_bytes(buf[5..9].try_into()?),
-                                   length: u32::from_be_bytes(buf[9..13].try_into()?), })
-            }
-            7 => {
-                Ok(Self::Piece { index: u32::from_be_bytes(buf[1..5].try_into()?),
-                                 begin: u32::from_be_bytes(buf[5..9].try_into()?),
-                                 piece: ByteBuf::from(&buf[9..]), })
-            }
-            8 => {
-                Ok(Self::Cancel { index: u32::from_be_bytes(buf[1..5].try_into()?),
-                                  begin: u32::from_be_bytes(buf[5..9].try_into()?),
-                                  length: u32::from_be_bytes(buf[9..13].try_into()?), })
-            }
+            5 => Ok(Self::Bitfield {
+                sent_indices: ByteBuf::from(&buf[1..]),
+            }),
+            6 => Ok(Self::Request {
+                index: u32::from_be_bytes(buf[1..5].try_into()?),
+                begin: u32::from_be_bytes(buf[5..9].try_into()?),
+                length: u32::from_be_bytes(buf[9..13].try_into()?),
+            }),
+            7 => Ok(Self::Piece {
+                index: u32::from_be_bytes(buf[1..5].try_into()?),
+                begin: u32::from_be_bytes(buf[5..9].try_into()?),
+                piece: ByteBuf::from(&buf[9..]),
+            }),
+            8 => Ok(Self::Cancel {
+                index: u32::from_be_bytes(buf[1..5].try_into()?),
+                begin: u32::from_be_bytes(buf[5..9].try_into()?),
+                length: u32::from_be_bytes(buf[9..13].try_into()?),
+            }),
             _ => Err(anyhow!("got unexpected PeerMessage type: {}", buf[0])),
         }
     }
 
+    #[allow(dead_code)]
     fn to_bytes(&self) -> Vec<u8> {
         match &self {
-            Self::Choke{} => { vec![0] },
-            Self::Unchoke{} => { vec![1] },
-            Self::Interested{} => { vec![2] },
-            Self::NotInterested{} => { vec![3] },
-            Self::Have{ index } => { [4].iter().chain(index.to_be_bytes().iter()).copied().collect() },
-            Self::Bitfield{ sent_indices } => { [5].iter().chain(sent_indices.iter()).copied().collect() },
-            Self::Request{ index, begin, length } => { [6].iter().chain(index.to_be_bytes().iter()).chain(begin.to_be_bytes().iter()).chain(length.to_be_bytes().iter()).copied().collect() },
-            Self::Piece{ index, begin, piece } => { [7].iter().chain(index.to_be_bytes().iter()).chain(begin.to_be_bytes().iter()).chain(piece.iter()).copied().collect() },
-            Self::Cancel{ index, begin, length } => { [8].iter().chain(index.to_be_bytes().iter()).chain(begin.to_be_bytes().iter()).chain(length.to_be_bytes().iter()).copied().collect() },
+            Self::Choke {} => {
+                vec![0]
+            }
+            Self::Unchoke {} => {
+                vec![1]
+            }
+            Self::Interested {} => {
+                vec![2]
+            }
+            Self::NotInterested {} => {
+                vec![3]
+            }
+            Self::Have { index } => [4]
+                .iter()
+                .chain(index.to_be_bytes().iter())
+                .copied()
+                .collect(),
+            Self::Bitfield { sent_indices } => {
+                [5].iter().chain(sent_indices.iter()).copied().collect()
+            }
+            Self::Request {
+                index,
+                begin,
+                length,
+            } => [6]
+                .iter()
+                .chain(index.to_be_bytes().iter())
+                .chain(begin.to_be_bytes().iter())
+                .chain(length.to_be_bytes().iter())
+                .copied()
+                .collect(),
+            Self::Piece {
+                index,
+                begin,
+                piece,
+            } => [7]
+                .iter()
+                .chain(index.to_be_bytes().iter())
+                .chain(begin.to_be_bytes().iter())
+                .chain(piece.iter())
+                .copied()
+                .collect(),
+            Self::Cancel {
+                index,
+                begin,
+                length,
+            } => [8]
+                .iter()
+                .chain(index.to_be_bytes().iter())
+                .chain(begin.to_be_bytes().iter())
+                .chain(length.to_be_bytes().iter())
+                .copied()
+                .collect(),
         }
     }
+}
+
+#[allow(dead_code)]
+struct PeerState {
+    im_choked: bool,
+    theyre_choked: bool,
+    im_interested: bool,
+    theyre_interested: bool,
+    my_bitfield: Vec<u8>,
+    their_bitfield: Vec<u8>,
+    remote: SocketAddrV4,
+    conn: TcpStream,
+    info_hash: [u8; 20],
+}
+
+impl PeerState {
+    async fn connect(remote: SocketAddrV4, info_hash: [u8; 20]) -> anyhow::Result<Self> {
+        let mut peerconn = TcpStream::connect(remote)
+            .await
+            .context("failed to connect to peer")?;
+        let my_hand = PeerHandshake::new(info_hash, *b"00112233445566778899");
+        peerconn
+            .write_all(&my_hand.to_bytes())
+            .await
+            .context("failed to send handshake to peer")?;
+        Ok(PeerState {
+            im_choked: true,
+            theyre_choked: false,
+            im_interested: true,
+            theyre_interested: false,
+            my_bitfield: vec![],
+            their_bitfield: vec![],
+            remote,
+            conn: peerconn,
+            info_hash,
+        })
+    }
+}
+
+fn hexedit<T: AsRef<[u8]>>(data: T) -> String {
+    data.as_ref()
+        .chunks(16)
+        .map(|chunk| {
+            (
+                chunk
+                    .chunks(2)
+                    .map(|uc| hex::encode(uc) + " ")
+                    .collect::<String>(),
+                chunk,
+            )
+        })
+        .map(|(hexstr, bytes)| {
+            hexstr
+                + " "
+                + unsafe {
+                    &String::from_utf8_unchecked(
+                        bytes
+                            .iter()
+                            .map(|b| {
+                                if b.is_ascii() && !b.is_ascii_whitespace() && !b.is_ascii_control()
+                                {
+                                    *b
+                                } else {
+                                    b'.'
+                                }
+                            })
+                            .collect(),
+                    )
+                }
+                + "\n"
+        })
+        .collect()
 }
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
@@ -328,26 +459,19 @@ async fn main() -> anyhow::Result<()> {
                 .context("failed to read metainfo file")?;
             let peer_addr =
                 SocketAddrV4::from_str(&args[3]).context("failed to parse given peer address")?;
-            let mut peerconn = TcpStream::connect(peer_addr)
+
+            let peer = PeerState::connect(peer_addr, metainf.info.hash()?)
                 .await
                 .context("failed to connect to peer")?;
-            let my_hand = PeerHandshake::new(
-                metainf.info.hash().context("failed creating infohash")?,
-                *b"00112233445566778899",
-            );
-            peerconn
-                .write_all(&my_hand.to_bytes())
-                .await
-                .context("failed to send handshake to peer")?;
 
             let mut b = Vec::with_capacity(512);
             loop {
                 b.clear();
-                peerconn
+                peer.conn
                     .readable()
                     .await
                     .context("failed waiting for data from peer")?;
-                match peerconn.try_read_buf(&mut b) {
+                match peer.conn.try_read_buf(&mut b) {
                     Ok(0) => {
                         return Err(anyhow::anyhow!("got nothing from peer"));
                     }
@@ -367,11 +491,15 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "download_piece" => {
-            assert_eq!(args[2], "-o".to_string(), "output must be specified with -o <filepath> as 2nd & 3rd args");
+            assert_eq!(
+                args[2],
+                "-o".to_string(),
+                "output must be specified with -o <filepath> as 2nd & 3rd args"
+            );
 
-            let outfile = &args[3];
+            let _outfile = &args[3];
             let mi_file = &args[4];
-            let piece_idx = &args[5];
+            let _piece_idx = &args[5];
 
             let metainf = Metainfo::from_file(mi_file)
                 .await
@@ -454,31 +582,26 @@ async fn main() -> anyhow::Result<()> {
 
             // handshake begin
 
-            let mut peerconn = TcpStream::connect(peers[0])
-                .await
-                .context("failed to connect to peer")?;
-            let my_hand = PeerHandshake::new(
-                metainf.info.hash().context("failed creating infohash")?,
-                *b"00112233445566778899",
-            );
-            peerconn
-                .write_all(&my_hand.to_bytes())
-                .await
-                .context("failed to send handshake to peer")?;
+            let peer = PeerState::connect(peers[0], metainf.info.hash()?).await?;
 
             let mut b = Vec::with_capacity(512);
             loop {
                 b.clear();
-                peerconn
+                peer.conn
                     .readable()
                     .await
                     .context("failed waiting for data from peer")?;
-                match peerconn.try_read_buf(&mut b) {
+                match peer.conn.try_read_buf(&mut b) {
                     Ok(0) => {
                         return Err(anyhow::anyhow!("got nothing from peer"));
                     }
                     Ok(n) => {
-                        assert!(n == 68, "got wrong size response: {}", n);
+                        assert!(
+                            n == 68,
+                            "got wrong size response: {}\nbuf:\n{}",
+                            n,
+                            hexedit(b)
+                        );
                         let their_hand = PeerHandshake::from_bytes(&b);
                         println!("Peer ID: {}", hex::encode(their_hand.peer_id));
                         break;
@@ -494,8 +617,11 @@ async fn main() -> anyhow::Result<()> {
             // peer messaging
             loop {
                 b.clear();
-                peerconn.readable().await.context("failed waiting for new messages from peer")?;
-                match peerconn.try_read_buf(&mut b) {
+                peer.conn
+                    .readable()
+                    .await
+                    .context("failed waiting for new messages from peer")?;
+                match peer.conn.try_read_buf(&mut b) {
                     Ok(0) => {
                         return Err(anyhow!("got nothing from peer, expected message"));
                     }
@@ -510,10 +636,14 @@ async fn main() -> anyhow::Result<()> {
                         break;
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        eprintln!("false positive from peercon.readable() while waiting for new messages");
+                        eprintln!(
+                            "false positive from peercon.readable() while waiting for new messages"
+                        );
                         continue;
                     }
-                    Err(e) => return Err(anyhow!(e).context("some other error when reading peer message")),
+                    Err(e) => {
+                        return Err(anyhow!(e).context("some other error when reading peer message"))
+                    }
                 }
             }
 
