@@ -272,6 +272,11 @@ impl PeerMessage {
     }
 }
 
+enum PeerSMState {
+    Start,
+    Alive,
+}
+
 #[allow(dead_code)]
 struct PeerState {
     im_choked: bool,
@@ -283,7 +288,19 @@ struct PeerState {
     remote: SocketAddrV4,
     conn: TcpStream,
     info_hash: [u8; 20],
+    recv_buf: Vec<u8>,
+    machine: PeerSMState,
 }
+
+// state machine
+// start (no handshake yet received)
+//   wait for 68+ bytes in the buffer
+//   decode handshake
+// alive
+//   wait for at least 4 bytes (an i32be)
+//   wait for that many bytes
+//   decode message
+//
 
 impl PeerState {
     async fn connect(remote: SocketAddrV4, info_hash: [u8; 20]) -> anyhow::Result<Self> {
@@ -305,7 +322,74 @@ impl PeerState {
             remote,
             conn: peerconn,
             info_hash,
+            recv_buf: vec![],
+            machine: PeerSMState::Start,
         })
+    }
+
+    async fn poll(&self) {
+        let mut b = Vec::with_capacity(512);
+        loop {
+            b.clear();
+            self.conn
+                .readable()
+                .await
+                .expect("failed waiting for data from peer");
+            match self.conn.try_read_buf(&mut b) {
+                Ok(0) => {
+                    panic!("got nothing from peer");
+                }
+                Ok(n) => {
+                    assert!(
+                        n == 68,
+                        "got wrong size response: {}\nbuf:\n{}",
+                        n,
+                        hexedit(b)
+                    );
+                    let their_hand = PeerHandshake::from_bytes(&b);
+                    println!("Peer ID: {}", hex::encode(their_hand.peer_id));
+                    break;
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    eprintln!("false positive from peercon.readable()");
+                    continue;
+                }
+                Err(e) => panic!("some other error from peer: {}", e),
+            }
+        }
+
+        // peer messaging
+        loop {
+            b.clear();
+            self.conn
+                .readable()
+                .await
+                .expect("failed waiting for new messages from peer");
+            match self.conn.try_read_buf(&mut b) {
+                Ok(0) => {
+                    panic!("got nothing from peer, expected message");
+                }
+                Ok(_n) => {
+                    let maybe_msg = PeerMessage::from_bytes(&b);
+                    if let Err(e) = maybe_msg {
+                        panic!("failed to deserialize peer message: {}", e);
+                    }
+
+                    let msg = maybe_msg.unwrap();
+                    println!("got message from peer: {:?}", msg);
+                    break;
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    eprintln!(
+                        "false positive from peercon.readable() while waiting for new messages"
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    panic!("some other error when reading peer message: {}", e);
+                }
+            }
+        }
     }
 }
 
@@ -583,69 +667,7 @@ async fn main() -> anyhow::Result<()> {
             // handshake begin
 
             let peer = PeerState::connect(peers[0], metainf.info.hash()?).await?;
-
-            let mut b = Vec::with_capacity(512);
-            loop {
-                b.clear();
-                peer.conn
-                    .readable()
-                    .await
-                    .context("failed waiting for data from peer")?;
-                match peer.conn.try_read_buf(&mut b) {
-                    Ok(0) => {
-                        return Err(anyhow::anyhow!("got nothing from peer"));
-                    }
-                    Ok(n) => {
-                        assert!(
-                            n == 68,
-                            "got wrong size response: {}\nbuf:\n{}",
-                            n,
-                            hexedit(b)
-                        );
-                        let their_hand = PeerHandshake::from_bytes(&b);
-                        println!("Peer ID: {}", hex::encode(their_hand.peer_id));
-                        break;
-                    }
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        eprintln!("false positive from peercon.readable()");
-                        continue;
-                    }
-                    Err(e) => return Err(anyhow!(e).context("some other error from peer")),
-                }
-            }
-
-            // peer messaging
-            loop {
-                b.clear();
-                peer.conn
-                    .readable()
-                    .await
-                    .context("failed waiting for new messages from peer")?;
-                match peer.conn.try_read_buf(&mut b) {
-                    Ok(0) => {
-                        return Err(anyhow!("got nothing from peer, expected message"));
-                    }
-                    Ok(_n) => {
-                        let maybe_msg = PeerMessage::from_bytes(&b);
-                        if let Err(e) = maybe_msg {
-                            anyhow::bail!(e.context("failed to deserialize peer message"));
-                        }
-
-                        let msg = maybe_msg.unwrap();
-                        println!("got message from peer: {:?}", msg);
-                        break;
-                    }
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        eprintln!(
-                            "false positive from peercon.readable() while waiting for new messages"
-                        );
-                        continue;
-                    }
-                    Err(e) => {
-                        return Err(anyhow!(e).context("some other error when reading peer message"))
-                    }
-                }
-            }
+            peer.poll().await;
 
             Ok(())
         }
