@@ -401,7 +401,7 @@ impl PeerState {
                         if self.recv_buf.len() >= 68 {
                             let new_buf = self.recv_buf.split_off(68);
                             let hs_bytes = &self.recv_buf;
-                            let their_hand = PeerHandshake::from_bytes(&hs_bytes);
+                            let their_hand = PeerHandshake::from_bytes(hs_bytes);
                             self.recv_buf = new_buf;
                             eprintln!("Peer ID: {}", hex::encode(their_hand.peer_id));
                             self.machine = PeerSMState::Alive;
@@ -432,7 +432,7 @@ impl PeerState {
                         }
                     }
                     PeerSMState::Waiting(need) => {
-                        if self.recv_buf.len() == 0 {
+                        if self.recv_buf.is_empty() {
                             break 'drainbuf;
                         } else if self.recv_buf.len()
                             >= need.try_into().expect("can't compare buffer size")
