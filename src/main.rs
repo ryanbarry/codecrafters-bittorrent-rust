@@ -10,7 +10,7 @@ use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
-use tokio::{fs::File, io::AsyncReadExt, io::AsyncWriteExt, net::TcpStream};
+use tokio::{fs::File, io::AsyncReadExt, io::AsyncWriteExt, net::TcpStream, time};
 
 #[derive(Serialize, Deserialize)]
 struct InfoDict {
@@ -212,7 +212,6 @@ impl PeerMessage {
         }
     }
 
-    #[allow(dead_code)]
     fn to_bytes(&self) -> Vec<u8> {
         match &self {
             Self::Choke {} => {
@@ -300,9 +299,11 @@ struct PeerState {
 // alive
 //   wait for at least 4 bytes (an i32be)
 //   move into waiting(i32be)
-// waiting
+// waitbytes
 //   wait for that many bytes
 //   decode message
+//     if bitfield -> set im_interested=true
+// interested
 //
 
 impl PeerState {
@@ -318,7 +319,7 @@ impl PeerState {
         Ok(PeerState {
             im_choked: true,
             theyre_choked: false,
-            im_interested: true,
+            im_interested: false,
             theyre_interested: false,
             my_bitfield: vec![],
             their_bitfield: vec![],
@@ -332,28 +333,29 @@ impl PeerState {
 
     async fn poll(&mut self) {
         loop {
-            loop {
+            'tryread: loop {
                 self.conn
                     .readable()
                     .await
                     .expect("failed waiting for data from peer");
+                eprintln!("peer connection should be readable");
                 match self.conn.try_read_buf(&mut self.recv_buf) {
                     Ok(0) => {
                         eprintln!("got 0 bytes");
+                        time::sleep(time::Duration::from_secs(1)).await;
                     }
                     Ok(n) => {
                         eprintln!("got {} bytes from peer", n);
-                        break;
+                        break 'tryread;
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         eprintln!("false positive from peercon.readable()");
-                        continue;
                     }
                     Err(e) => panic!("some other error from peer: {}", e),
                 }
             }
 
-            loop {
+            'drainbuf: loop {
                 match self.machine {
                     PeerSMState::Start => {
                         if self.recv_buf.len() >= 68 {
@@ -365,7 +367,7 @@ impl PeerState {
                             self.machine = PeerSMState::Alive;
                         } else {
                             eprintln!("not enough bytes to start");
-                            break;
+                            break 'drainbuf;
                         }
                     }
                     PeerSMState::Alive => {
@@ -375,14 +377,21 @@ impl PeerState {
                             msglen.copy_from_slice(&self.recv_buf[..4]);
                             self.recv_buf = new_buf;
                             let need = u32::from_be_bytes(msglen);
-                            self.machine = PeerSMState::Waiting(need);
+                            if need == 0 {
+                                eprintln!("got keepalive");
+                            } else {
+                                eprintln!("next message will be {} bytes", need);
+                                self.machine = PeerSMState::Waiting(need);
+                            }
                         } else {
-                            eprintln!("not enough bytes to decode msglen");
-                            break;
+                            eprintln!("not enough bytes to decode msglen, only found {}", self.recv_buf.len());
+                            break 'drainbuf;
                         }
                     }
                     PeerSMState::Waiting(need) => {
-                        if self.recv_buf.len() >= need.try_into().expect("can't compare buffer size") {
+                        if self.recv_buf.len() == 0 {
+                            break 'drainbuf;
+                        } else if self.recv_buf.len() >= need.try_into().expect("can't compare buffer size") {
                             let new_buf = self.recv_buf.split_off(need.try_into().expect("can't split buffer at this size"));
                             let maybe_msg = PeerMessage::from_bytes(&self.recv_buf);
                             self.recv_buf = new_buf;
@@ -393,9 +402,25 @@ impl PeerState {
 
                             let msg = maybe_msg.unwrap();
                             eprintln!("got message from peer: {:?}", msg);
+                            self.machine = PeerSMState::Alive;
+                            match msg {
+                                PeerMessage::Bitfield { .. } => {
+                                    if !self.im_interested {
+                                        let mut to_send = PeerMessage::Interested {  }.to_bytes();
+                                        let mut bytes_out = Vec::from(to_send.len().to_be_bytes());
+                                        bytes_out.append(&mut to_send);
+                                        self.conn.write_all(&bytes_out).await.expect("failed to send interested to peer");
+                                        self.im_interested = true;
+                                        eprintln!("told peer i'm interested");
+                                    }
+                                }
+                                _ => {
+                                    eprintln!("non-bitfield message");
+                                }
+                            }
                         } else {
-                            eprintln!("not enough bytes for the message");
-                            break;
+                            eprintln!("not enough bytes for the message, got {} but wanted {}", self.recv_buf.len(), need);
+                            break 'drainbuf;
                         }
                     }
                 }
@@ -404,6 +429,7 @@ impl PeerState {
     }
 }
 
+#[allow(dead_code)]
 fn hexedit<T: AsRef<[u8]>>(data: T) -> String {
     data.as_ref()
         .chunks(16)
