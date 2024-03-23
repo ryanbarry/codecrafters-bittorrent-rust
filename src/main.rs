@@ -350,7 +350,7 @@ impl PeerState {
             .write_all(&my_hand.to_bytes())
             .await
             .context("failed to send handshake to peer")?;
-        let piece_buf = Vec::with_capacity(metainfo.info.length.try_into()?);
+        let piece_buf = Vec::with_capacity(metainfo.info.piece_length.try_into()?);
         eprintln!(
             "reserved {} bytes for piece data buffer",
             piece_buf.capacity()
@@ -378,14 +378,14 @@ impl PeerState {
                     .readable()
                     .await
                     .expect("failed waiting for data from peer");
-                eprintln!("peer connection should be readable");
+                // eprintln!("peer connection should be readable");
                 match self.conn.try_read_buf(&mut self.recv_buf) {
                     Ok(0) => {
                         eprintln!("got 0 bytes");
                         time::sleep(time::Duration::from_secs(1)).await;
                     }
-                    Ok(n) => {
-                        eprintln!("got {} bytes from peer", n);
+                    Ok(_n) => {
+                        // eprintln!("got {} bytes from peer", n);
                         break 'tryread;
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -539,11 +539,11 @@ impl PeerState {
                                 }
                             }
                         } else {
-                            eprintln!(
-                                "not enough bytes for the message, got {} but wanted {}",
-                                self.recv_buf.len(),
-                                need
-                            );
+                            // eprintln!(
+                            //     "not enough bytes for the message, got {} but wanted {}",
+                            //     self.recv_buf.len(),
+                            //     need
+                            // );
                             break 'drainbuf;
                         }
                     }
