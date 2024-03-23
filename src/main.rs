@@ -307,7 +307,6 @@ impl PeerMessage {
 enum PeerSMState {
     Start,
     Alive,
-    Waiting(u32),
 }
 
 #[allow(dead_code)]
@@ -331,14 +330,8 @@ struct PeerState {
 //   wait for 68+ bytes in the buffer
 //   decode handshake
 // alive
-//   wait for at least 4 bytes (an i32be)
-//   move into waiting(i32be)
-// waitbytes
-//   wait for that many bytes
-//   decode message
-//     if bitfield -> set im_interested=true
-// interested
-//
+//   wait for some bytes
+//   try to read a message from what was received
 
 impl PeerState {
     async fn connect(remote: SocketAddrV4, metainfo: Metainfo) -> anyhow::Result<Self> {
@@ -384,8 +377,8 @@ impl PeerState {
                         eprintln!("got 0 bytes");
                         time::sleep(time::Duration::from_secs(1)).await;
                     }
-                    Ok(_n) => {
-                        // eprintln!("got {} bytes from peer", n);
+                    Ok(n) => {
+                        eprintln!("got {} bytes from peer", n);
                         break 'tryread;
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -411,144 +404,132 @@ impl PeerState {
                         }
                     }
                     PeerSMState::Alive => {
-                        if self.recv_buf.len() >= 4 {
-                            let new_buf = self.recv_buf.split_off(4);
-                            let mut msglen: [u8; 4] = [0u8; 4];
-                            msglen.copy_from_slice(&self.recv_buf[..4]);
-                            self.recv_buf = new_buf;
-                            let need = u32::from_be_bytes(msglen);
-                            if need == 0 {
+                        match self.try_read_msg() {
+                            Err(e) => {
+                                eprintln!("couldn't read message: {}", e);
+                                break 'drainbuf;
+                            }
+                            Ok(None) => {
                                 eprintln!("got keepalive");
-                            } else {
-                                eprintln!("next message will be {} bytes", need);
-                                self.machine = PeerSMState::Waiting(need);
                             }
-                        } else {
-                            eprintln!(
-                                "not enough bytes to decode msglen, only found {}",
-                                self.recv_buf.len()
-                            );
-                            break 'drainbuf;
-                        }
-                    }
-                    PeerSMState::Waiting(need) => {
-                        if self.recv_buf.is_empty() {
-                            break 'drainbuf;
-                        } else if self.recv_buf.len()
-                            >= need.try_into().expect("can't compare buffer size")
-                        {
-                            let new_buf = self.recv_buf.split_off(
-                                need.try_into().expect("can't split buffer at this size"),
-                            );
-                            let maybe_msg = PeerMessage::from_bytes(&self.recv_buf);
-                            self.recv_buf = new_buf;
-
-                            if let Err(e) = maybe_msg {
-                                panic!("failed to deserialize peer message: {}", e);
-                            }
-
-                            let msg = maybe_msg.unwrap();
+                            Ok(Some(msg)) => {
                             eprintln!("got message from peer: {:?}", msg);
                             self.machine = PeerSMState::Alive;
-                            match msg {
-                                PeerMessage::Choke {} => self.im_choked = true,
-                                PeerMessage::Unchoke {} => {
-                                    self.im_choked = false;
+                                match msg {
+                                    PeerMessage::Choke {} => self.im_choked = true,
+                                    PeerMessage::Unchoke {} => {
+                                        self.im_choked = false;
 
-                                    let mut to_send = PeerMessage::Request {
-                                        index: piece_idx,
-                                        begin: 0,
-                                        length: (16 * 1024),
-                                    }
-                                    .to_bytes();
-                                    let mut bytes_out = Vec::from(to_send.len().to_be_bytes());
-                                    bytes_out.append(&mut to_send);
-                                    self.conn
-                                        .write_all(&bytes_out)
-                                        .await
-                                        .expect("failed to tell peer my request");
-                                }
-                                PeerMessage::Bitfield { sent_indices } => {
-                                    self.their_bitfield = sent_indices.to_vec();
-
-                                    if !self.im_interested {
-                                        let mut to_send = PeerMessage::Interested {}.to_bytes();
+                                        let mut to_send = PeerMessage::Request {
+                                            index: piece_idx,
+                                            begin: 0,
+                                            length: (16 * 1024),
+                                        }
+                                        .to_bytes();
                                         let mut bytes_out = Vec::from(to_send.len().to_be_bytes());
                                         bytes_out.append(&mut to_send);
                                         self.conn
                                             .write_all(&bytes_out)
                                             .await
-                                            .expect("failed to send interested to peer");
-                                        self.im_interested = true;
-                                        eprintln!("told peer i'm interested");
+                                            .expect("failed to tell peer my request");
                                     }
-                                }
-                                PeerMessage::Piece {
-                                    index: _,
-                                    begin,
-                                    piece,
-                                } => {
-                                    let begin = begin as usize;
-                                    let next_piece_start = begin + piece.len();
-                                    self.piece_buf.resize(self.piece_buf.len() + piece.len(), 0);
-                                    self.piece_buf.splice(begin..next_piece_start, piece);
+                                    PeerMessage::Bitfield { sent_indices } => {
+                                        self.their_bitfield = sent_indices.to_vec();
 
-                                    eprintln!("self.piece_buf.len()={}", self.piece_buf.len());
-                                    if self.piece_buf.len() as u64
-                                        == self.metainfo.info.piece_length.min(
-                                            self.metainfo.info.length
-                                                - piece_idx as u64
+                                        if !self.im_interested {
+                                            let mut to_send = PeerMessage::Interested {}.to_bytes();
+                                            let mut bytes_out = Vec::from(to_send.len().to_be_bytes());
+                                            bytes_out.append(&mut to_send);
+                                            self.conn
+                                                .write_all(&bytes_out)
+                                                .await
+                                                .expect("failed to send interested to peer");
+                                            self.im_interested = true;
+                                            eprintln!("told peer i'm interested");
+                                        }
+                                    }
+                                    PeerMessage::Piece {
+                                        index: _,
+                                        begin,
+                                        piece,
+                                    } => {
+                                        let begin = begin as usize;
+                                        let next_piece_start = begin + piece.len();
+                                        self.piece_buf.resize(self.piece_buf.len() + piece.len(), 0);
+                                        self.piece_buf.splice(begin..next_piece_start, piece);
+
+                                        eprintln!("self.piece_buf.len()={}", self.piece_buf.len());
+                                        if self.piece_buf.len() as u64
+                                            == self.metainfo.info.piece_length.min(
+                                                self.metainfo.info.length
+                                                    - piece_idx as u64
                                                     * self.metainfo.info.piece_length,
-                                        )
-                                    {
-                                        let mut to_send = PeerMessage::NotInterested {}.to_bytes();
+                                            )
+                                        {
+                                            let mut to_send = PeerMessage::NotInterested {}.to_bytes();
+                                            let mut bytes_out = Vec::from(to_send.len().to_be_bytes());
+                                            bytes_out.append(&mut to_send);
+                                            self.conn
+                                                .write_all(&bytes_out)
+                                                .await
+                                                .expect("failed to send NOTinterested to peer");
+                                            self.im_interested = false;
+                                            eprintln!("told peer i'm NOTinterested");
+
+                                            return;
+                                        }
+
+                                        let standard_piece_len = 16 * 1024;
+                                        let plen = standard_piece_len.min(
+                                            self.metainfo.info.length
+                                                - (next_piece_start as u64
+                                                   + piece_idx as u64
+                                                   * self.metainfo.info.piece_length),
+                                        ) as u32;
+                                        let mut to_send = PeerMessage::Request {
+                                            index: piece_idx,
+                                            begin: next_piece_start as u32,
+                                            length: plen,
+                                        }
+                                        .to_bytes();
                                         let mut bytes_out = Vec::from(to_send.len().to_be_bytes());
                                         bytes_out.append(&mut to_send);
                                         self.conn
                                             .write_all(&bytes_out)
                                             .await
-                                            .expect("failed to send NOTinterested to peer");
-                                        self.im_interested = false;
-                                        eprintln!("told peer i'm NOTinterested");
-
-                                        return;
+                                            .expect("failed to tell peer my request");
                                     }
-
-                                    let standard_piece_len = 16 * 1024;
-                                    let plen = standard_piece_len.min(
-                                        self.metainfo.info.length
-                                            - (next_piece_start as u64
-                                                + piece_idx as u64
-                                                    * self.metainfo.info.piece_length),
-                                    ) as u32;
-                                    let mut to_send = PeerMessage::Request {
-                                        index: piece_idx,
-                                        begin: next_piece_start as u32,
-                                        length: plen,
+                                    _ => {
+                                        eprintln!("non-bitfield message");
                                     }
-                                    .to_bytes();
-                                    let mut bytes_out = Vec::from(to_send.len().to_be_bytes());
-                                    bytes_out.append(&mut to_send);
-                                    self.conn
-                                        .write_all(&bytes_out)
-                                        .await
-                                        .expect("failed to tell peer my request");
-                                }
-                                _ => {
-                                    eprintln!("non-bitfield message");
                                 }
                             }
-                        } else {
-                            // eprintln!(
-                            //     "not enough bytes for the message, got {} but wanted {}",
-                            //     self.recv_buf.len(),
-                            //     need
-                            // );
-                            break 'drainbuf;
                         }
-                    }
+                   }
                 }
             }
+        }
+    }
+
+    fn try_read_msg(&mut self) -> anyhow::Result<Option<PeerMessage>> {
+        let buf_len = self.recv_buf.len();
+        if buf_len >= 4 {
+            let need = u32::from_be_bytes(self.recv_buf[..4].try_into().expect("recv_buf.len() was supposed to be >=4"));
+            if need == 0 {
+                // a "keepalive"
+                return Ok(None)
+            }
+
+            if buf_len >= (4 + (need as usize)) {
+                let new_buf = self.recv_buf.split_off(4+need as usize);
+                let msg = PeerMessage::from_bytes(&self.recv_buf[4..4+need as usize])?;
+                self.recv_buf = new_buf;
+                Ok(Some(msg))
+            } else {
+                Err(anyhow!("not enough bytes for the full message"))
+            }
+        } else {
+            Err(anyhow!("not enough bytes for a msglen"))
         }
     }
 }
