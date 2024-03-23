@@ -296,18 +296,15 @@ impl PeerState {
                 }
             }
 
-            'drainbuf: loop {
-                if self.recv_buf.len() >= 68 {
-                    let new_buf = self.recv_buf.split_off(68);
-                    let hs_bytes = &self.recv_buf;
-                    let their_hand = PeerHandshake::from_bytes(hs_bytes);
-                    self.recv_buf = new_buf;
-                    eprintln!("Peer ID: {}", hex::encode(their_hand.peer_id));
-                    break 'ultimate;
-                } else {
-                    eprintln!("not enough bytes to start");
-                    break 'drainbuf;
-                }
+            if self.recv_buf.len() >= 68 {
+                let new_buf = self.recv_buf.split_off(68);
+                let hs_bytes = &self.recv_buf;
+                let their_hand = PeerHandshake::from_bytes(hs_bytes);
+                self.recv_buf = new_buf;
+                eprintln!("Peer ID: {}", hex::encode(their_hand.peer_id));
+                break 'ultimate;
+            } else {
+                eprintln!("not enough bytes to start");
             }
         }
     }
