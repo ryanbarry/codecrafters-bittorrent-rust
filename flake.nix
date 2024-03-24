@@ -45,12 +45,11 @@
 
         devShell = with pkgs; mkShell {
           nativeBuildInputs = [ pkg-config ];
-          buildInputs = [ openssl toolchain rustPackages.clippy dig ];
+          buildInputs = [
+            toolchain
+            openssl # need to add this for use by the openssl-sys crate
+          ];
           RUST_LOG = "trace";
-          shellHook = ''
-          alias mygit="! [[ "\$\(pwd\)" == \"/tmp/testing\" ]] && echo \"unsafe! not in /tmp/testing\" || $PWD/your_git.sh"
-          alias rsdoc="firefox --new-tab $(nix-store -q $(which rustc))/share/doc/rust/html/std/index.html"
-          '';
         };
       });
 }
