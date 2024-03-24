@@ -352,12 +352,6 @@ async fn main() -> anyhow::Result<()> {
             // handshake begin
 
             let mut peer = peer::PeerState::connect(peers[0], metainf).await?;
-            // peer.poll_piece(
-            //     piece_idx
-            //         .parse()
-            //         .context("could not parse given piece index")?,
-            // )
-            // .await;
             eprintln!("waiting for handshake");
             peer.wait_for_handshake().await;
 
