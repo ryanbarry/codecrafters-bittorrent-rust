@@ -343,13 +343,13 @@ impl PeerState {
         // TODO: check/set interested state, message about the change if needed
 
         let piece_len = self.metainfo.info.piece_length.min(
-            self.metainfo.info.length as u32 - self.metainfo.info.piece_length as u32 * piece_idx,
+            self.metainfo.info.length - self.metainfo.info.piece_length * piece_idx,
         );
         eprintln!("expecting to get {} bytes for this piece", piece_len);
 
         while self.req_buf.iter().map(|rb| rb.buf.len()).sum::<usize>() < piece_len as usize {
             while self.req_buf.len() < (piece_len.div_ceil(PIECE_CHUNK_SZ)).try_into()?
-                && self.req_buf.iter().filter(|rb| rb.buf.len() == 0).count() < 5
+                && self.req_buf.iter().filter(|rb| rb.buf.is_empty()).count() < 5
             {
                 let chunk_to_request = {
                     let chunks_left: Vec<u32> = (0..(piece_len.div_ceil(PIECE_CHUNK_SZ)))
@@ -405,8 +405,7 @@ impl PeerState {
             piece_len,
             "sum of bufs vs computed len do not match"
         );
-        let mut piece_bytes = Vec::with_capacity(piece_len.try_into()?);
-        piece_bytes.resize(piece_len.try_into()?, 0);
+        let mut piece_bytes = vec![0; piece_len.try_into()?];
         for pr in self.req_buf.iter_mut() {
             piece_bytes.splice(
                 pr.begin as usize..pr.begin as usize + pr.buf.len(),
@@ -441,7 +440,7 @@ impl PeerState {
             }
         }
 
-        if res.len() > 0 {
+        if !res.is_empty() {
             return Ok(res);
         }
 
@@ -453,7 +452,7 @@ impl PeerState {
             }
             Ok(_n) => {
                 // eprintln!("got {} bytes from peer", n);
-                'drainbuf: while self.recv_buf.len() > 0 {
+                'drainbuf: while !self.recv_buf.is_empty() {
                     match self.try_read_msg() {
                         Err(_e) => {
                             // eprintln!("couldn't read message: {}", e);
@@ -671,11 +670,11 @@ impl PeerState {
                 if pr.buf.capacity() < piece.len() {
                     return Err(anyhow!("the received Piece data is bigger than requested"));
                 }
-                if pr.buf.len() > 0 {
+                if !pr.buf.is_empty() {
                     return Err(anyhow!("got a Piece for which i already have data"));
                 }
                 pr.buf.resize(piece.len(), 0);
-                pr.buf.copy_from_slice(&piece);
+                pr.buf.copy_from_slice(piece);
 
                 Ok(msg)
             }

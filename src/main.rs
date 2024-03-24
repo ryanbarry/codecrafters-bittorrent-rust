@@ -361,9 +361,9 @@ async fn main() -> anyhow::Result<()> {
             peer.wait_for_handshake().await;
 
             eprintln!("checking if i have peer's bitfield");
-            while peer.bitfield().len() == 0 {
+            while peer.bitfield().is_empty() {
                 let msgs = peer.poll().await?;
-                if msgs.len() == 0 {
+                if msgs.is_empty() {
                     eprintln!("got nothing from peer this round");
                 } else {
                     for m in msgs {
