@@ -256,6 +256,7 @@ async fn main() -> anyhow::Result<()> {
                 .context("failed to connect to peer")?;
 
             peer.wait_for_handshake().await;
+            println!("Peer ID: {}", hex::encode(peer.remote_peer_id()));
             Ok(())
         }
         "download_piece" => {

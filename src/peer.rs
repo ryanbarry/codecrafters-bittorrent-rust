@@ -229,6 +229,7 @@ struct PieceRequest {
 
 #[allow(dead_code)]
 pub struct PeerState {
+    their_peer_id: [u8; 20],
     im_choked: bool,
     theyre_choked: bool,
     im_interested: bool,
@@ -267,6 +268,7 @@ impl PeerState {
             piece_buf.capacity()
         );
         Ok(PeerState {
+            their_peer_id: [0; 20],
             im_choked: true,
             theyre_choked: false,
             im_interested: false,
@@ -299,6 +301,10 @@ impl PeerState {
         Ok(())
     }
 
+    pub fn remote_peer_id(&self) -> [u8; 20] {
+        self.their_peer_id
+    }
+
     pub async fn wait_for_handshake(&mut self) {
         'ultimate: loop {
             'tryread: loop {
@@ -328,7 +334,7 @@ impl PeerState {
                 let hs_bytes = &self.recv_buf;
                 let their_hand = PeerHandshake::from_bytes(hs_bytes);
                 self.recv_buf = new_buf;
-                println!("Peer ID: {}", hex::encode(their_hand.peer_id));
+                self.their_peer_id = their_hand.peer_id;
                 break 'ultimate;
             } else {
                 eprintln!("not enough bytes to start");
