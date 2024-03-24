@@ -22,9 +22,9 @@ mod peer;
 struct InfoDict {
     name: String,
     #[serde(rename = "piece length")]
-    piece_length: u64,
+    piece_length: u32,
     pieces: ByteBuf,
-    length: u64,
+    length: u32,
 }
 
 impl InfoDict {
@@ -351,19 +351,47 @@ async fn main() -> anyhow::Result<()> {
             // handshake begin
 
             let mut peer = peer::PeerState::connect(peers[0], metainf).await?;
-            peer.poll(
-                piece_idx
-                    .parse()
-                    .context("could not parse given piece index")?,
-            )
-            .await;
+            // peer.poll_piece(
+            //     piece_idx
+            //         .parse()
+            //         .context("could not parse given piece index")?,
+            // )
+            // .await;
+            eprintln!("waiting for handshake");
+            peer.wait_for_handshake().await;
+
+            eprintln!("checking if i have peer's bitfield");
+            while peer.bitfield().len() == 0 {
+                let msgs = peer.poll().await?;
+                if msgs.len() == 0 {
+                    eprintln!("got nothing from peer this round");
+                } else {
+                    for m in msgs {
+                        eprintln!("waiting for bitfield, got: {:?}", m);
+                    }
+                }
+            }
+
+            eprintln!("indicating interest");
+            peer.indicate_interest().await?;
+
+            eprintln!("checking if peer is choking");
+            while peer.choking() {
+                let msgs = peer.poll().await?;
+                for m in msgs {
+                    eprintln!("waiting for unchoke, got: {:?}", m);
+                }
+            }
+
+            eprintln!("fetching piece");
+            let piece_buf = peer.get_piece(piece_idx.parse().context("could not parse given piece index")?).await?;
 
             let mut f = OpenOptions::new()
                 .write(true)
                 .create(true)
                 .open(outfile)
-                .await?;
-            f.write_all(&peer.piece_buf).await?;
+                .await.context("error opening file for writing piece")?;
+            f.write_all(&piece_buf).await.context("error writing out piece buffer to file")?;
 
             println!("Piece {} downloaded to {}", piece_idx, outfile);
 
