@@ -49,7 +49,6 @@ pub async fn announce(
     let ih_urlenc = urlenc(&infohash);
     let id_urlenc = urlenc(&my_peer_id);
 
-    eprintln!("fetching peers from tracker at {}", tracker_addr);
     let tracker_client = reqwest::Client::new();
     let mut req = tracker_client
         .get(tracker_addr)
