@@ -57,32 +57,30 @@ async fn main() -> anyhow::Result<()> {
                 .await
                 .context("failed reading metainfo")?;
 
-            let mut tracker_addr = torrent.announce;
+            let http_trackers = torrent
+                .announce_list
+                .iter()
+                .flat_map(|al| {
+                    al.iter()
+                      .filter(|a| a.starts_with("http://"))
+                      .cloned()
+                      .collect::<Vec<String>>()
+                })
+                .collect::<Vec<String>>();
 
-            if !torrent.announce_list.is_empty() {
-                let http_trackers = torrent
-                    .announce_list
-                    .iter()
-                    .flat_map(|al| {
-                        al.iter()
-                            .filter(|a| a.starts_with("http://"))
-                            .cloned()
-                            .collect::<Vec<String>>()
-                    })
-                    .collect::<Vec<String>>();
-                if !http_trackers.is_empty() {
-                    tracker_addr = http_trackers.first().unwrap().to_string();
-                }
+            eprintln!("found {} http trackers", http_trackers.len());
+
+            let mut peers = vec![];
+            for ht in http_trackers {
+                eprintln!("fetching peers from tracker at {}", ht);
+                peers.append(&mut tracker::announce(
+                    &ht,
+                    torrent.info.length(),
+                    torrent.info.hash()?,
+                    peer_id,
+                )
+                           .await?);
             }
-
-            eprintln!("fetching peers from tracker at {}", tracker_addr);
-            let peers = tracker::announce(
-                &tracker_addr,
-                torrent.info.length(),
-                torrent.info.hash()?,
-                peer_id,
-            )
-            .await?;
             for p in peers.iter() {
                 println!("{}", p);
             }
