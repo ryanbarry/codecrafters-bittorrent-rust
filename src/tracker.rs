@@ -27,12 +27,9 @@ enum TrackerResponse {
     Success(TrackerPeers),
 }
 
-pub async fn get_peers(
-    tracker_addr: &str,
-    left: u32,
-    infohash: [u8; 20],
-) -> anyhow::Result<Vec<SocketAddrV4>> {
-    let ih_urlenc = infohash
+fn urlenc<B: AsRef<[u8]>>(bytes: B) -> String {
+    bytes
+        .as_ref()
         .iter()
         .map(|b| match *b {
             b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'-' | b'.' | b'_' | b'~' => {
@@ -40,26 +37,35 @@ pub async fn get_peers(
             }
             _ => format!("%{:02X}", b),
         })
-        .collect::<String>();
+        .collect::<String>()
+}
+
+pub async fn announce(
+    tracker_addr: &str,
+    left: u32,
+    infohash: [u8; 20],
+    my_peer_id: [u8; 20],
+) -> anyhow::Result<Vec<SocketAddrV4>> {
+    let ih_urlenc = urlenc(&infohash);
+    let id_urlenc = urlenc(&my_peer_id);
 
     eprintln!("fetching peers from tracker at {}", tracker_addr);
     let tracker_client = reqwest::Client::new();
     let mut req = tracker_client
         .get(tracker_addr)
         .query(&[
-            ("peer_id", "00112233445566778899"),
+            ("compact", "1"),
             ("left", &left.to_string()),
             ("port", "6881"),
             ("uploaded", "0"),
             ("downloaded", "0"),
-            ("compact", "1"),
         ])
         .build()?;
     let q = req
         .url()
         .query()
         .expect("query parameters were not created");
-    let newq = q.to_owned() + "&info_hash=" + &ih_urlenc;
+    let newq = q.to_owned() + "&info_hash=" + &ih_urlenc + "&peer_id=" + &id_urlenc;
     req.url_mut().set_query(Some(&newq));
 
     //eprintln!("request: {:?}", req);

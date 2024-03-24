@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddrV4, str::FromStr};
+use std::{env, net::SocketAddrV4, str::FromStr, arch::x86_64::_rdrand32_step};
 
 use anyhow::Context;
 use tokio::{
@@ -17,6 +17,13 @@ async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
     let command = &args[1];
 
+    let mut peer_id = [0u8; 20];
+    for idx in 0..5 {
+        let mut randval = 0;
+        unsafe {_rdrand32_step(&mut randval);}
+        peer_id[idx..idx+4].copy_from_slice(&randval.to_le_bytes());
+    }
+
     match command.trim() {
         "decode" => {
             let deser: serde_bencode::value::Value =
@@ -28,8 +35,9 @@ async fn main() -> anyhow::Result<()> {
         "peers" => {
             let torrent = types::Metainfo::from_file(&args[2]).await?;
             eprintln!("fetching peers from tracker at {}", torrent.announce);
+
             let peers =
-                tracker::get_peers(&torrent.announce, torrent.info.length, torrent.info.hash()?)
+                tracker::announce(&torrent.announce, torrent.info.length, torrent.info.hash()?, peer_id)
                     .await?;
             for p in peers.iter() {
                 println!("{}", p);
@@ -84,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
 
             eprintln!("fetching peers from tracker at {}", metainf.announce);
             let peers =
-                tracker::get_peers(&metainf.announce, metainf.info.length, metainf.info.hash()?)
+                tracker::announce(&metainf.announce, metainf.info.length, metainf.info.hash()?, peer_id)
                     .await?;
 
             // handshake begin
@@ -157,7 +165,7 @@ async fn main() -> anyhow::Result<()> {
 
             eprintln!("fetching peers from tracker at {}", metainf.announce);
             let peers =
-                tracker::get_peers(&metainf.announce, metainf.info.length, metainf.info.hash()?)
+                tracker::announce(&metainf.announce, metainf.info.length, metainf.info.hash()?, peer_id)
                     .await?;
 
             // handshake begin
