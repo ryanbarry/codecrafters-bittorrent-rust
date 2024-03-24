@@ -1,4 +1,4 @@
-use std::{arch::x86_64::_rdrand32_step, env, net::SocketAddrV4, str::FromStr};
+use std::{arch::x86_64::_rdrand32_step, env, net::SocketAddr, str::FromStr};
 
 use anyhow::Context;
 use tokio::{
@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
         unsafe {
             _rdrand32_step(&mut randval);
         }
-        peer_id[idx..idx + 4].copy_from_slice(&randval.to_le_bytes());
+        peer_id[idx*4..idx*4 + 4].copy_from_slice(&randval.to_le_bytes());
     }
 
     match command.trim() {
@@ -52,6 +52,37 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        "peers2" => {
+            let torrent = types::Metainfo::from_file(&args[2])
+                .await
+                .context("failed reading metainfo")?;
+
+            let mut tracker_addr = torrent.announce;
+
+            if torrent.announce_list.len() > 0 {
+                let http_trackers = torrent
+                    .announce_list
+                    .iter()
+                    .flat_map(|al| al.iter().filter(|a| a.starts_with("http://")).cloned().collect::<Vec<String>>())
+                    .collect::<Vec<String>>();
+                if http_trackers.len() > 0 {
+                    tracker_addr = http_trackers.first().unwrap().to_string();
+                }
+            }
+
+            eprintln!("fetching peers from tracker at {}", tracker_addr);
+            let peers = tracker::announce(
+                &tracker_addr,
+                torrent.info.length(),
+                torrent.info.hash()?,
+                peer_id,
+            )
+            .await?;
+            for p in peers.iter() {
+                println!("{}", p);
+            }
+            Ok(())
+        }
         "info" => {
             let metainf = types::Metainfo::from_file(&args[2])
                 .await
@@ -66,12 +97,27 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        "info2" => {
+            let metainf = types::Metainfo::from_file(&args[2])
+                .await
+                .context("failed to read metainfo file")?;
+            println!("Tracker URL: {}", metainf.announce);
+            println!("Tracker URLs:\n{:?}", metainf.announce_list);
+            println!("Length: {}", metainf.info.length());
+            println!("Info Hash: {}", hex::encode(metainf.info.hash()?));
+            println!("Piece Length: {}", metainf.info.piece_length());
+            println!("Piece Hashes:");
+            for ph in metainf.info.pieces().chunks(20).map(Vec::from) {
+                println!("{}", hex::encode(ph));
+            }
+            Ok(())
+        }
         "handshake" => {
             let metainf = types::Metainfo::from_file(&args[2])
                 .await
                 .context("failed to read metainfo file")?;
             let peer_addr =
-                SocketAddrV4::from_str(&args[3]).context("failed to parse given peer address")?;
+                SocketAddr::from_str(&args[3]).context("failed to parse given peer address")?;
 
             let mut peer = peer::PeerState::connect(peer_addr, &metainf)
                 .await

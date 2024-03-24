@@ -63,6 +63,9 @@ impl InfoDict {
 pub struct Metainfo {
     pub announce: String,
     pub info: InfoDict,
+    #[serde(rename = "announce-list")]
+    #[serde(default)]
+    pub announce_list: Vec<Vec<String>>,
 }
 
 impl Metainfo {

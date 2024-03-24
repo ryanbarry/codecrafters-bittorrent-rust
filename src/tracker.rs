@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, Ipv6Addr};
 
 use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
@@ -21,10 +21,21 @@ struct TrackerPeers {
 }
 
 #[derive(Serialize, Deserialize)]
+struct TrackerPeers6 {
+    interval: u64,
+    peers6: ByteBuf,
+    complete: u64,
+    incomplete: u64,
+    #[serde(rename = "min interval")]
+    min_interval: u64,
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 enum TrackerResponse {
     Error(TrackerError),
     Success(TrackerPeers),
+    Success6(TrackerPeers6),
 }
 
 fn urlenc<B: AsRef<[u8]>>(bytes: B) -> String {
@@ -45,7 +56,7 @@ pub async fn announce(
     left: u32,
     infohash: [u8; 20],
     my_peer_id: [u8; 20],
-) -> anyhow::Result<Vec<SocketAddrV4>> {
+) -> anyhow::Result<Vec<SocketAddr>> {
     let ih_urlenc = urlenc(infohash);
     let id_urlenc = urlenc(my_peer_id);
 
@@ -88,13 +99,25 @@ pub async fn announce(
             .peers
             .chunks(6)
             .map(|peer| {
-                let mut ipbytes: [u8; 4] = [0; 4];
+                let mut ipbytes = [0; 4];
                 ipbytes.copy_from_slice(&peer[0..4]);
                 let mut skbytes = [0u8; 2];
                 skbytes.copy_from_slice(&peer[4..6]);
-                SocketAddrV4::new(Ipv4Addr::from(ipbytes), u16::from_be_bytes(skbytes))
+                SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::from(ipbytes)), u16::from_be_bytes(skbytes))
             })
             .collect()),
+        Ok(TrackerResponse::Success6(r)) => Ok(r
+                                               .peers6
+                                               .chunks(18)
+                                               .map(|peer| {
+                                                   let mut ipbytes = [0; 16];
+                                                   ipbytes.copy_from_slice(&peer[0..16]);
+                                                   let mut skbytes = [0u8; 2];
+                                                   skbytes.copy_from_slice(&peer[16..18]);
+                                                   SocketAddr::new(std::net::IpAddr::V6(Ipv6Addr::from(ipbytes)), u16::from_be_bytes(skbytes))
+                                               })
+                                               .collect()
+        ),
         Err(e) => {
             eprintln!(
                 "error reading tracker data, data as json:\n{}",

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::arch::x86_64::_rdrand32_step;
 use std::fmt;
-use std::net::SocketAddrV4;
+use std::net::SocketAddr;
 use tokio::io::{self, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time;
@@ -231,7 +231,7 @@ pub struct PeerState<'a> {
     theyre_interested: bool,
     my_bitfield: Vec<u8>,
     their_bitfield: Vec<u8>,
-    remote: SocketAddrV4,
+    remote: SocketAddr,
     conn: TcpStream,
     metainfo: &'a crate::types::Metainfo,
     recv_buf: Vec<u8>,
@@ -248,7 +248,7 @@ pub struct PeerState<'a> {
 
 impl<'a> PeerState<'a> {
     pub async fn connect(
-        remote: SocketAddrV4,
+        remote: SocketAddr,
         metainfo: &'a crate::types::Metainfo,
     ) -> anyhow::Result<Self> {
         let mut peerconn = TcpStream::connect(remote)
