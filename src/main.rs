@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
 use tokio::{
-    fs::{File, OpenOptions},
-    io::AsyncReadExt,
+    fs::{File, OpenOptions, self},
+    io::{AsyncReadExt, self},
     io::AsyncWriteExt,
 };
 
@@ -294,26 +294,38 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
-            for (piece_idx, _piece_hash) in metainf.info.pieces.iter().enumerate() {
+            let mut piece_files = vec![];
+
+            for (piece_idx, piece_hash) in metainf.info.pieces.chunks(20).enumerate() {
                 let piece_idx = piece_idx as u32;
-                eprintln!("fetching piece {}", piece_idx);
+                eprintln!("fetching piece {} with hash {}", piece_idx, hex::encode(piece_hash));
                 let piece_buf = peer
                     .get_piece(
                         piece_idx
                     )
                     .await?;
 
+                let piece_filename = outfile.to_string() + ".part" + &format!("{:03}", piece_idx);
                 let mut f = OpenOptions::new()
                     .write(true)
                     .create(true)
-                    .open(outfile.to_string() + ".part" + &format!("{:3}", piece_idx))
+                    .open(&piece_filename)
                     .await
                     .context("error opening file for writing piece")?;
                 f.write_all(&piece_buf)
                  .await
                  .context("error writing out piece buffer to file")?;
 
-                println!("Piece {} downloaded to {}", piece_idx, outfile);
+                eprintln!("Piece {} downloaded to {}", piece_idx, &piece_filename);
+                piece_files.push(piece_filename);
+            };
+
+            let mut output = OpenOptions::new().write(true).create(true).open(outfile).await.context("error opening out file")?;
+            for pf in piece_files {
+                let mut input = OpenOptions::new().write(false).read(true).open(&pf).await.context("error opening piece file for reading")?;
+                io::copy(&mut input, &mut output).await?;
+                drop(input);
+                fs::remove_file(&pf).await?;
             }
 
             Ok(())
