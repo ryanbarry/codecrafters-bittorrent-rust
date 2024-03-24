@@ -1,4 +1,4 @@
-[![progress-banner](https://backend.codecrafters.io/progress/bittorrent/bb17f68b-a9e6-4457-971b-0ab56cc9054e)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+[![progress-banner](https://backend.codecrafters.io/progress/bittorrent/bb17f68b-a9e6-4457-971b-0ab56cc9054e)](https://app.codecrafters.io/users/ryanbarry)
 
 This is a starting point for Rust solutions to the
 ["Build Your Own BitTorrent" Challenge](https://app.codecrafters.io/courses/bittorrent/overview).
@@ -9,7 +9,7 @@ about how torrent files are structured, HTTP trackers, BitTorrent’s Peer
 Protocol, pipelining and more.
 
 **Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+[codecrafters.io](https://app.codecrafters.io/r/lucky-eel-226504) to try the challenge.
 
 # Passing the first stage
 
