@@ -384,14 +384,23 @@ async fn main() -> anyhow::Result<()> {
             }
 
             eprintln!("fetching piece");
-            let piece_buf = peer.get_piece(piece_idx.parse().context("could not parse given piece index")?).await?;
+            let piece_buf = peer
+                .get_piece(
+                    piece_idx
+                        .parse()
+                        .context("could not parse given piece index")?,
+                )
+                .await?;
 
             let mut f = OpenOptions::new()
                 .write(true)
                 .create(true)
                 .open(outfile)
-                .await.context("error opening file for writing piece")?;
-            f.write_all(&piece_buf).await.context("error writing out piece buffer to file")?;
+                .await
+                .context("error opening file for writing piece")?;
+            f.write_all(&piece_buf)
+                .await
+                .context("error writing out piece buffer to file")?;
 
             println!("Piece {} downloaded to {}", piece_idx, outfile);
 

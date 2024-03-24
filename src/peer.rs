@@ -293,7 +293,7 @@ impl PeerState {
 
     pub async fn indicate_interest(&mut self) -> anyhow::Result<()> {
         if !self.im_interested {
-            self.send_msg(PeerMessage::Interested {  }).await?;
+            self.send_msg(PeerMessage::Interested {}).await?;
             self.im_interested = true;
         }
         Ok(())
@@ -348,11 +348,18 @@ impl PeerState {
         eprintln!("expecting to get {} bytes for this piece", piece_len);
 
         while self.req_buf.iter().map(|rb| rb.buf.len()).sum::<usize>() < piece_len as usize {
-            while self.req_buf.len() < (piece_len.div_ceil(PIECE_CHUNK_SZ)).try_into()? && self.req_buf.iter().filter(|rb| rb.buf.len() == 0).count() < 5 {
+            while self.req_buf.len() < (piece_len.div_ceil(PIECE_CHUNK_SZ)).try_into()?
+                && self.req_buf.iter().filter(|rb| rb.buf.len() == 0).count() < 5
+            {
                 let chunk_to_request = {
                     let chunks_left: Vec<u32> = (0..(piece_len.div_ceil(PIECE_CHUNK_SZ)))
-                    .filter(|potential_idx| !self.req_buf.iter().any(|rb| rb.begin == (PIECE_CHUNK_SZ * potential_idx)))
-                    .collect();
+                        .filter(|potential_idx| {
+                            !self
+                                .req_buf
+                                .iter()
+                                .any(|rb| rb.begin == (PIECE_CHUNK_SZ * potential_idx))
+                        })
+                        .collect();
                     // eprintln!("chunks left: {:?}", chunks_left);
 
                     let mut rand_num: u32 = 0;
@@ -363,19 +370,28 @@ impl PeerState {
                     }
                     chunks_left[rand_num as usize]
                 };
-                eprintln!("chose to request chunk {} of piece {}", chunk_to_request, piece_idx);
+                eprintln!(
+                    "chose to request chunk {} of piece {}",
+                    chunk_to_request, piece_idx
+                );
 
                 let chunk_begin = PIECE_CHUNK_SZ * chunk_to_request;
-                let chunk_length = PIECE_CHUNK_SZ.min(piece_len-PIECE_CHUNK_SZ*chunk_to_request);
+                let chunk_length =
+                    PIECE_CHUNK_SZ.min(piece_len - PIECE_CHUNK_SZ * chunk_to_request);
                 // eprintln!("...which corresponds to begin={} and length={}", chunk_begin, chunk_length);
 
                 self.send_msg(PeerMessage::Request {
                     index: piece_idx,
                     begin: chunk_begin,
                     length: chunk_length,
-                }).await?;
+                })
+                .await?;
 
-                self.req_buf.push(PieceRequest { index: piece_idx, begin: chunk_begin, buf: Vec::with_capacity(chunk_length.try_into()?) });
+                self.req_buf.push(PieceRequest {
+                    index: piece_idx,
+                    begin: chunk_begin,
+                    buf: Vec::with_capacity(chunk_length.try_into()?),
+                });
             }
             let msgs = self.poll().await?;
             for m in msgs {
@@ -384,11 +400,18 @@ impl PeerState {
         }
         eprintln!("got all the chunks of the piece");
 
-        assert_eq!(u32::try_from(self.req_buf.iter().map(|pr| pr.buf.len()).sum::<usize>())?, piece_len, "sum of bufs vs computed len do not match");
+        assert_eq!(
+            u32::try_from(self.req_buf.iter().map(|pr| pr.buf.len()).sum::<usize>())?,
+            piece_len,
+            "sum of bufs vs computed len do not match"
+        );
         let mut piece_bytes = Vec::with_capacity(piece_len.try_into()?);
         piece_bytes.resize(piece_len.try_into()?, 0);
         for pr in self.req_buf.iter_mut() {
-            piece_bytes.splice(pr.begin as usize..pr.begin as usize+pr.buf.len(), pr.buf.clone());
+            piece_bytes.splice(
+                pr.begin as usize..pr.begin as usize + pr.buf.len(),
+                pr.buf.clone(),
+            );
             pr.buf.clear();
         }
         self.req_buf.clear();
@@ -409,7 +432,10 @@ impl PeerState {
                 }
                 Ok(Some(msg)) => {
                     let handled = self.handle_msg(msg)?;
-                    eprintln!("got a message that was already waiting in the buffer: {:?}", handled);
+                    eprintln!(
+                        "got a message that was already waiting in the buffer: {:?}",
+                        handled
+                    );
                     res.push(handled);
                 }
             }
@@ -419,13 +445,11 @@ impl PeerState {
             return Ok(res);
         }
 
-        self.conn
-            .readable()
-            .await?;
+        self.conn.readable().await?;
         match self.conn.try_read_buf(&mut self.recv_buf) {
             Ok(0) => {
                 self.conn.shutdown().await?;
-                return Err(anyhow!("peer closed the connection"))
+                return Err(anyhow!("peer closed the connection"));
             }
             Ok(_n) => {
                 // eprintln!("got {} bytes from peer", n);
@@ -631,7 +655,11 @@ impl PeerState {
                 ref piece,
             } => {
                 let pr_idx = {
-                    let mut pr_iter = self.req_buf.iter().enumerate().filter(|(_, pr)| pr.index == index && pr.begin == begin);
+                    let mut pr_iter = self
+                        .req_buf
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, pr)| pr.index == index && pr.begin == begin);
                     if pr_iter.clone().count() < 1 {
                         return Err(anyhow!(
                             "got a Piece message for which i have no outstanding Request"
