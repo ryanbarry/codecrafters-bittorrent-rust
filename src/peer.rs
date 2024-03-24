@@ -235,7 +235,6 @@ pub struct PeerState<'a> {
     conn: TcpStream,
     metainfo: &'a crate::types::Metainfo,
     recv_buf: Vec<u8>,
-    pub piece_buf: Vec<u8>,
     req_buf: Vec<PieceRequest>,
 }
 
@@ -260,11 +259,7 @@ impl<'a> PeerState<'a> {
             .write_all(&my_hand.to_bytes())
             .await
             .context("failed to send handshake to peer")?;
-        let piece_buf = Vec::with_capacity(metainfo.info.piece_length.try_into()?);
-        eprintln!(
-            "reserved {} bytes for piece data buffer",
-            piece_buf.capacity()
-        );
+
         Ok(PeerState {
             their_peer_id: [0; 20],
             im_choked: true,
@@ -277,7 +272,6 @@ impl<'a> PeerState<'a> {
             conn: peerconn,
             metainfo,
             recv_buf: vec![],
-            piece_buf,
             req_buf: vec![],
         })
     }
