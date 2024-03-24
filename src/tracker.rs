@@ -92,7 +92,7 @@ pub async fn get_peers(
         Err(e) => {
             eprintln!(
                 "error reading tracker data, data as json:\n{}",
-                crate::convert_bencode_to_json(
+                crate::utils::convert_bencode_to_json(
                     serde_bencode::from_bytes(&body).expect("could not deserialize as bencode")
                 )
                     .expect("invalid conversion")
