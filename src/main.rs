@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("fetching peers from tracker at {}", torrent.announce);
 
             let peers =
-                tracker::announce(&torrent.announce, torrent.info.length, torrent.info.hash()?, peer_id)
+                tracker::announce(&torrent.announce, torrent.info.length(), torrent.info.hash()?, peer_id)
                     .await?;
             for p in peers.iter() {
                 println!("{}", p);
@@ -49,11 +49,11 @@ async fn main() -> anyhow::Result<()> {
                 .await
                 .context("failed to read metainfo file")?;
             println!("Tracker URL: {}", metainf.announce);
-            println!("Length: {}", metainf.info.length);
+            println!("Length: {}", metainf.info.length());
             println!("Info Hash: {}", hex::encode(metainf.info.hash()?));
-            println!("Piece Length: {}", metainf.info.piece_length);
+            println!("Piece Length: {}", metainf.info.piece_length());
             println!("Piece Hashes:");
-            for ph in metainf.info.pieces.chunks(20).map(Vec::from) {
+            for ph in metainf.info.pieces().chunks(20).map(Vec::from) {
                 println!("{}", hex::encode(ph));
             }
             Ok(())
@@ -92,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
 
             eprintln!("fetching peers from tracker at {}", metainf.announce);
             let peers =
-                tracker::announce(&metainf.announce, metainf.info.length, metainf.info.hash()?, peer_id)
+                tracker::announce(&metainf.announce, metainf.info.length(), metainf.info.hash()?, peer_id)
                     .await?;
 
             // handshake begin
@@ -165,7 +165,7 @@ async fn main() -> anyhow::Result<()> {
 
             eprintln!("fetching peers from tracker at {}", metainf.announce);
             let peers =
-                tracker::announce(&metainf.announce, metainf.info.length, metainf.info.hash()?, peer_id)
+                tracker::announce(&metainf.announce, metainf.info.length(), metainf.info.hash()?, peer_id)
                     .await?;
 
             // handshake begin
@@ -199,7 +199,7 @@ async fn main() -> anyhow::Result<()> {
 
             let mut piece_files = vec![];
 
-            for (piece_idx, piece_hash) in metainf.info.pieces.chunks(20).enumerate() {
+            for (piece_idx, piece_hash) in metainf.info.pieces().chunks(20).enumerate() {
                 let piece_idx = piece_idx as u32;
                 eprintln!(
                     "fetching piece {} with hash {}",
