@@ -4,7 +4,10 @@ use std::{fmt, net::SocketAddr};
 use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
-use tokio::{io::{self, AsyncWriteExt}, net::TcpStream};
+use tokio::{
+    io::{self, AsyncWriteExt},
+    net::TcpStream,
+};
 
 const PIECE_CHUNK_SZ: u32 = 16 * 1024; // 16KiB
 
