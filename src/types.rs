@@ -46,8 +46,8 @@ impl InfoDict {
 
     pub fn pieces(&self) -> &ByteBuf {
         match &self {
-            InfoDict::SingleFile { pieces, .. } => &pieces,
-            InfoDict::MultiFile { pieces, .. } => &pieces,
+            InfoDict::SingleFile { pieces, .. } => pieces,
+            InfoDict::MultiFile { pieces, .. } => pieces,
         }
     }
 

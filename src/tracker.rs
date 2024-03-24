@@ -46,8 +46,8 @@ pub async fn announce(
     infohash: [u8; 20],
     my_peer_id: [u8; 20],
 ) -> anyhow::Result<Vec<SocketAddrV4>> {
-    let ih_urlenc = urlenc(&infohash);
-    let id_urlenc = urlenc(&my_peer_id);
+    let ih_urlenc = urlenc(infohash);
+    let id_urlenc = urlenc(my_peer_id);
 
     let tracker_client = reqwest::Client::new();
     let mut req = tracker_client
