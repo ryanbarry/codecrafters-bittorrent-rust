@@ -328,7 +328,7 @@ impl PeerState {
                 let hs_bytes = &self.recv_buf;
                 let their_hand = PeerHandshake::from_bytes(hs_bytes);
                 self.recv_buf = new_buf;
-                eprintln!("Peer ID: {}", hex::encode(their_hand.peer_id));
+                println!("Peer ID: {}", hex::encode(their_hand.peer_id));
                 break 'ultimate;
             } else {
                 eprintln!("not enough bytes to start");
