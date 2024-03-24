@@ -1,12 +1,11 @@
 use std::{
     env,
-    net::{Ipv4Addr, SocketAddrV4},
+    net::SocketAddrV4,
     path::Path,
     str::FromStr,
 };
 
 use anyhow::Context;
-use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
@@ -17,6 +16,7 @@ use tokio::{
 };
 
 mod peer;
+mod tracker;
 
 #[derive(Serialize, Deserialize)]
 struct InfoDict {
@@ -49,29 +49,6 @@ impl Metainfo {
         file.read_to_end(&mut contents).await?;
         Ok(serde_bencode::from_bytes(&contents)?)
     }
-}
-
-#[derive(Serialize, Deserialize)]
-struct TrackerError {
-    #[serde(rename = "failure reason")]
-    failure_reason: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct TrackerPeers {
-    interval: u64,
-    peers: ByteBuf,
-    complete: u64,
-    incomplete: u64,
-    #[serde(rename = "min interval")]
-    min_interval: u64,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(untagged)]
-enum TrackerResponse {
-    Error(TrackerError),
-    Success(TrackerPeers),
 }
 
 fn convert_bencode_to_json(
@@ -151,80 +128,8 @@ async fn main() -> anyhow::Result<()> {
         }
         "peers" => {
             let torrent = Metainfo::from_file(&args[2]).await?;
-            let ih_urlenc = torrent
-                .info
-                .hash()?
-                .iter()
-                .map(|b| match *b {
-                    b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'-' | b'.' | b'_' | b'~' => {
-                        format!("{}", *b as char)
-                    }
-                    _ => format!("%{:02X}", b),
-                })
-                .collect::<String>();
-            //eprintln!("ih_urlenc: {}", ih_urlenc);
-
             eprintln!("fetching peers from tracker at {}", torrent.announce);
-            let tracker_client = reqwest::blocking::Client::new();
-            let mut req = tracker_client
-                .get(torrent.announce)
-                .query(&[
-                    ("peer_id", "00112233445566778899"),
-                    ("left", &torrent.info.length.to_string()),
-                    ("port", "6881"),
-                    ("uploaded", "0"),
-                    ("downloaded", "0"),
-                    ("compact", "1"),
-                ])
-                .build()?;
-            let q = req
-                .url()
-                .query()
-                .expect("query parameters were not created");
-            let newq = q.to_owned() + "&info_hash=" + &ih_urlenc;
-            req.url_mut().set_query(Some(&newq));
-
-            //eprintln!("request: {:?}", req);
-            let mut res = tracker_client
-                .execute(req)
-                .expect("failed to get from tracker");
-            let body = {
-                let mut buf = vec![].writer();
-                res.copy_to(&mut buf)
-                    .expect("could not read response from tracker");
-                buf.into_inner()
-            };
-            //eprintln!("got a response: {}", String::from_utf8_lossy(&body));
-            let peers: Vec<SocketAddrV4>;
-            match serde_bencode::from_bytes(&body) {
-                Ok(TrackerResponse::Error(e)) => {
-                    panic!("tracker responded with error: {}", e.failure_reason)
-                }
-                Ok(TrackerResponse::Success(r)) => {
-                    peers = r
-                        .peers
-                        .chunks(6)
-                        .map(|peer| {
-                            let mut ipbytes: [u8; 4] = [0; 4];
-                            ipbytes.copy_from_slice(&peer[0..4]);
-                            let mut skbytes = [0u8; 2];
-                            skbytes.copy_from_slice(&peer[4..6]);
-                            SocketAddrV4::new(Ipv4Addr::from(ipbytes), u16::from_be_bytes(skbytes))
-                        })
-                        .collect();
-                }
-                Err(e) => {
-                    eprintln!(
-                        "error reading tracker data, data as json:\n{}",
-                        convert_bencode_to_json(
-                            serde_bencode::from_bytes(&body)
-                                .expect("could not deserialize as bencode")
-                        )
-                        .expect("invalid conversion")
-                    );
-                    anyhow::bail!("error deserializing tracker response: {}", e)
-                }
-            }
+            let peers = tracker::Tracker::get_peers(torrent.announce, torrent.info.length, torrent.info.hash()?).await?;
             for p in peers.iter() {
                 println!("{}", p);
             }
@@ -276,78 +181,8 @@ async fn main() -> anyhow::Result<()> {
 
             // tracker contact
 
-            let ih_urlenc = metainf
-                .info
-                .hash()?
-                .iter()
-                .map(|b| match *b {
-                    b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'-' | b'.' | b'_' | b'~' => {
-                        format!("{}", *b as char)
-                    }
-                    _ => format!("%{:02X}", b),
-                })
-                .collect::<String>();
-            //eprintln!("ih_urlenc: {}", ih_urlenc);
-
             eprintln!("fetching peers from tracker at {}", metainf.announce);
-            let tracker_client = reqwest::blocking::Client::new();
-            let mut req = tracker_client
-                .get(&metainf.announce)
-                .query(&[
-                    ("peer_id", "00112233445566778899"),
-                    ("left", &metainf.info.length.to_string()),
-                    ("port", "6881"),
-                    ("uploaded", "0"),
-                    ("downloaded", "0"),
-                    ("compact", "1"),
-                ])
-                .build()?;
-            let q = req
-                .url()
-                .query()
-                .expect("query parameters were not created");
-            let newq = q.to_owned() + "&info_hash=" + &ih_urlenc;
-            req.url_mut().set_query(Some(&newq));
-
-            let mut res = tracker_client
-                .execute(req)
-                .expect("failed to get from tracker");
-            let body = {
-                let mut buf = vec![].writer();
-                res.copy_to(&mut buf)
-                    .expect("could not read response from tracker");
-                buf.into_inner()
-            };
-            let peers: Vec<SocketAddrV4>;
-            match serde_bencode::from_bytes(&body) {
-                Ok(TrackerResponse::Error(e)) => {
-                    panic!("tracker responded with error: {}", e.failure_reason)
-                }
-                Ok(TrackerResponse::Success(r)) => {
-                    peers = r
-                        .peers
-                        .chunks(6)
-                        .map(|peer| {
-                            let mut ipbytes: [u8; 4] = [0; 4];
-                            ipbytes.copy_from_slice(&peer[0..4]);
-                            let mut skbytes = [0u8; 2];
-                            skbytes.copy_from_slice(&peer[4..6]);
-                            SocketAddrV4::new(Ipv4Addr::from(ipbytes), u16::from_be_bytes(skbytes))
-                        })
-                        .collect();
-                }
-                Err(e) => {
-                    eprintln!(
-                        "error reading tracker data, data as json:\n{}",
-                        convert_bencode_to_json(
-                            serde_bencode::from_bytes(&body)
-                                .expect("could not deserialize as bencode")
-                        )
-                        .expect("invalid conversion")
-                    );
-                    anyhow::bail!("error deserializing tracker response: {}", e)
-                }
-            }
+            let peers = tracker::Tracker::get_peers(metainf.announce.clone(), metainf.info.length, metainf.info.hash()?).await?;
 
             // handshake begin
 
