@@ -13,21 +13,14 @@ struct TrackerError {
 #[derive(Serialize, Deserialize)]
 struct TrackerPeers {
     interval: u64,
+    #[serde(default)]
     peers: ByteBuf,
     complete: u64,
     incomplete: u64,
     #[serde(rename = "min interval")]
     min_interval: u64,
-}
-
-#[derive(Serialize, Deserialize)]
-struct TrackerPeers6 {
-    interval: u64,
+    #[serde(default)]
     peers6: ByteBuf,
-    complete: u64,
-    incomplete: u64,
-    #[serde(rename = "min interval")]
-    min_interval: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -35,7 +28,6 @@ struct TrackerPeers6 {
 enum TrackerResponse {
     Error(TrackerError),
     Success(TrackerPeers),
-    Success6(TrackerPeers6),
 }
 
 fn urlenc<B: AsRef<[u8]>>(bytes: B) -> String {
@@ -108,11 +100,7 @@ pub async fn announce(
                     u16::from_be_bytes(skbytes),
                 )
             })
-            .collect()),
-        Ok(TrackerResponse::Success6(r)) => Ok(r
-            .peers6
-            .chunks(18)
-            .map(|peer| {
+            .chain(r.peers6.chunks(18).map(|peer| {
                 let mut ipbytes = [0; 16];
                 ipbytes.copy_from_slice(&peer[0..16]);
                 let mut skbytes = [0u8; 2];
@@ -121,7 +109,7 @@ pub async fn announce(
                     std::net::IpAddr::V6(Ipv6Addr::from(ipbytes)),
                     u16::from_be_bytes(skbytes),
                 )
-            })
+            }))
             .collect()),
         Err(e) => {
             eprintln!(
