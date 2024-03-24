@@ -1,51 +1,15 @@
-use std::{env, net::SocketAddrV4, path::Path, str::FromStr};
+use std::{env, net::SocketAddrV4, str::FromStr};
 
 use anyhow::Context;
-use serde::{Deserialize, Serialize};
-use serde_bytes::ByteBuf;
-use sha1::{Digest, Sha1};
 use tokio::{
-    fs::{File, OpenOptions, self},
-    io::{AsyncReadExt, self},
+    fs::{self, OpenOptions},
     io::AsyncWriteExt,
 };
 
 mod peer;
 mod tracker;
+mod types;
 mod utils;
-
-#[derive(Serialize, Deserialize, Clone)]
-struct InfoDict {
-    name: String,
-    #[serde(rename = "piece length")]
-    piece_length: u32,
-    pieces: ByteBuf,
-    length: u32,
-}
-
-impl InfoDict {
-    fn hash(&self) -> anyhow::Result<[u8; 20]> {
-        let mut hasher = Sha1::new();
-        hasher.update(serde_bencode::to_bytes(&self)?);
-        Ok(hasher.finalize().into())
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Metainfo {
-    announce: String,
-    info: InfoDict,
-}
-
-impl Metainfo {
-    async fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
-        let mut file = File::open(path).await?;
-        let fsz = file.metadata().await?.len();
-        let mut contents = Vec::with_capacity(fsz.try_into()?);
-        file.read_to_end(&mut contents).await?;
-        Ok(serde_bencode::from_bytes(&contents)?)
-    }
-}
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 #[tokio::main]
@@ -62,21 +26,18 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "peers" => {
-            let torrent = Metainfo::from_file(&args[2]).await?;
+            let torrent = types::Metainfo::from_file(&args[2]).await?;
             eprintln!("fetching peers from tracker at {}", torrent.announce);
-            let peers = tracker::get_peers(
-                &torrent.announce,
-                torrent.info.length,
-                torrent.info.hash()?,
-            )
-            .await?;
+            let peers =
+                tracker::get_peers(&torrent.announce, torrent.info.length, torrent.info.hash()?)
+                    .await?;
             for p in peers.iter() {
                 println!("{}", p);
             }
             Ok(())
         }
         "info" => {
-            let metainf = Metainfo::from_file(&args[2])
+            let metainf = types::Metainfo::from_file(&args[2])
                 .await
                 .context("failed to read metainfo file")?;
             println!("Tracker URL: {}", metainf.announce);
@@ -90,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "handshake" => {
-            let metainf = Metainfo::from_file(&args[2])
+            let metainf = types::Metainfo::from_file(&args[2])
                 .await
                 .context("failed to read metainfo file")?;
             let peer_addr =
@@ -115,19 +76,16 @@ async fn main() -> anyhow::Result<()> {
             let mi_file = &args[4];
             let piece_idx = &args[5];
 
-            let metainf = Metainfo::from_file(mi_file)
+            let metainf = types::Metainfo::from_file(mi_file)
                 .await
                 .context("failed to read metainfo file")?;
 
             // tracker contact
 
             eprintln!("fetching peers from tracker at {}", metainf.announce);
-            let peers = tracker::get_peers(
-                &metainf.announce,
-                metainf.info.length,
-                metainf.info.hash()?,
-            )
-            .await?;
+            let peers =
+                tracker::get_peers(&metainf.announce, metainf.info.length, metainf.info.hash()?)
+                    .await?;
 
             // handshake begin
 
@@ -191,19 +149,16 @@ async fn main() -> anyhow::Result<()> {
             let outfile = &args[3];
             let mi_file = &args[4];
 
-            let metainf = Metainfo::from_file(mi_file)
+            let metainf = types::Metainfo::from_file(mi_file)
                 .await
                 .context("failed to read metainfo file")?;
 
             // tracker contact
 
             eprintln!("fetching peers from tracker at {}", metainf.announce);
-            let peers = tracker::get_peers(
-                &metainf.announce,
-                metainf.info.length,
-                metainf.info.hash()?,
-            )
-            .await?;
+            let peers =
+                tracker::get_peers(&metainf.announce, metainf.info.length, metainf.info.hash()?)
+                    .await?;
 
             // handshake begin
 
@@ -238,12 +193,12 @@ async fn main() -> anyhow::Result<()> {
 
             for (piece_idx, piece_hash) in metainf.info.pieces.chunks(20).enumerate() {
                 let piece_idx = piece_idx as u32;
-                eprintln!("fetching piece {} with hash {}", piece_idx, hex::encode(piece_hash));
-                let piece_buf = peer
-                    .get_piece(
-                        piece_idx
-                    )
-                    .await?;
+                eprintln!(
+                    "fetching piece {} with hash {}",
+                    piece_idx,
+                    hex::encode(piece_hash)
+                );
+                let piece_buf = peer.get_piece(piece_idx).await?;
 
                 let piece_filename = outfile.to_string() + ".part" + &format!("{:03}", piece_idx);
                 let mut f = OpenOptions::new()
@@ -253,20 +208,31 @@ async fn main() -> anyhow::Result<()> {
                     .await
                     .context("error opening file for writing piece")?;
                 f.write_all(&piece_buf)
-                 .await
-                 .context("error writing out piece buffer to file")?;
+                    .await
+                    .context("error writing out piece buffer to file")?;
 
                 eprintln!("Piece {} downloaded to {}", piece_idx, &piece_filename);
                 piece_files.push(piece_filename);
-            };
+            }
 
-            let mut output = OpenOptions::new().write(true).create(true).open(outfile).await.context("error opening out file")?;
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(outfile)
+                .await
+                .context("error opening out file")?;
             for pf in piece_files {
-                let mut input = OpenOptions::new().write(false).read(true).open(&pf).await.context("error opening piece file for reading")?;
-                io::copy(&mut input, &mut output).await?;
+                let mut input = OpenOptions::new()
+                    .write(false)
+                    .read(true)
+                    .open(&pf)
+                    .await
+                    .context("error opening piece file for reading")?;
+                tokio::io::copy(&mut input, &mut output).await?;
                 drop(input);
                 fs::remove_file(&pf).await?;
             }
+            eprintln!("copied pieces into outfile {} and removed piece files", outfile);
 
             Ok(())
         }

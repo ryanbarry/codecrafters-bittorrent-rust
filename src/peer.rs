@@ -233,7 +233,7 @@ pub struct PeerState<'a> {
     their_bitfield: Vec<u8>,
     remote: SocketAddrV4,
     conn: TcpStream,
-    metainfo: &'a crate::Metainfo,
+    metainfo: &'a crate::types::Metainfo,
     recv_buf: Vec<u8>,
     pub piece_buf: Vec<u8>,
     req_buf: Vec<PieceRequest>,
@@ -248,7 +248,10 @@ pub struct PeerState<'a> {
 //   try to read a message from what was received
 
 impl<'a> PeerState<'a> {
-    pub async fn connect(remote: SocketAddrV4, metainfo: &'a crate::Metainfo) -> anyhow::Result<Self> {
+    pub async fn connect(
+        remote: SocketAddrV4,
+        metainfo: &'a crate::types::Metainfo,
+    ) -> anyhow::Result<Self> {
         let mut peerconn = TcpStream::connect(remote)
             .await
             .context("failed to connect to peer")?;

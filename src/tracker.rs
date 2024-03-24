@@ -79,23 +79,23 @@ pub async fn get_peers(
             e.failure_reason
         )),
         Ok(TrackerResponse::Success(r)) => Ok(r
-                                              .peers
-                                              .chunks(6)
-                                              .map(|peer| {
-                                                  let mut ipbytes: [u8; 4] = [0; 4];
-                                                  ipbytes.copy_from_slice(&peer[0..4]);
-                                                  let mut skbytes = [0u8; 2];
-                                                  skbytes.copy_from_slice(&peer[4..6]);
-                                                  SocketAddrV4::new(Ipv4Addr::from(ipbytes), u16::from_be_bytes(skbytes))
-                                              })
-                                              .collect()),
+            .peers
+            .chunks(6)
+            .map(|peer| {
+                let mut ipbytes: [u8; 4] = [0; 4];
+                ipbytes.copy_from_slice(&peer[0..4]);
+                let mut skbytes = [0u8; 2];
+                skbytes.copy_from_slice(&peer[4..6]);
+                SocketAddrV4::new(Ipv4Addr::from(ipbytes), u16::from_be_bytes(skbytes))
+            })
+            .collect()),
         Err(e) => {
             eprintln!(
                 "error reading tracker data, data as json:\n{}",
                 crate::utils::convert_bencode_to_json(
                     serde_bencode::from_bytes(&body).expect("could not deserialize as bencode")
                 )
-                    .expect("invalid conversion")
+                .expect("invalid conversion")
             );
             Err(anyhow!("error deserializing tracker response: {}", e))
         }
