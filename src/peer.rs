@@ -91,27 +91,27 @@ pub enum PeerMessage {
 impl fmt::Debug for PeerMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
-            Self::Choke {} => writeln!(f, "Choke {{  }}"),
-            Self::Unchoke {} => writeln!(f, "Unchoke {{  }}"),
-            Self::Interested {} => writeln!(f, "Interested {{  }}"),
-            Self::NotInterested {} => writeln!(f, "NotInterested {{  }}"),
-            Self::Have { index } => writeln!(f, "Have {{ {} }}", index),
-            Self::Bitfield { sent_indices } => writeln!(f, "Bitfield {{ {:?} }}", sent_indices),
+            Self::Choke {} => write!(f, "Choke {{  }}"),
+            Self::Unchoke {} => write!(f, "Unchoke {{  }}"),
+            Self::Interested {} => write!(f, "Interested {{  }}"),
+            Self::NotInterested {} => write!(f, "NotInterested {{  }}"),
+            Self::Have { index } => write!(f, "Have {{ {} }}", index),
+            Self::Bitfield { sent_indices } => write!(f, "Bitfield {{ {:?} }}", sent_indices),
             Self::Request {
                 index,
                 begin,
                 length,
-            } => writeln!(f, "Request {{ {}, {}, {} }}", index, begin, length),
+            } => write!(f, "Request {{ {}, {}, {} }}", index, begin, length),
             Self::Piece {
                 index,
                 begin,
                 piece: _,
-            } => writeln!(f, "Piece {{ {}, {}, [...data...] }}", index, begin),
+            } => write!(f, "Piece {{ {}, {}, [...data...] }}", index, begin),
             Self::Cancel {
                 index,
                 begin,
                 length,
-            } => writeln!(f, "Cancel {{ {}, {}, {} }}", index, begin, length),
+            } => write!(f, "Cancel {{ {}, {}, {} }}", index, begin, length),
         }
     }
 }
