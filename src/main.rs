@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
         unsafe {
             _rdrand32_step(&mut randval);
         }
-        peer_id[idx*4..idx*4 + 4].copy_from_slice(&randval.to_le_bytes());
+        peer_id[idx * 4..idx * 4 + 4].copy_from_slice(&randval.to_le_bytes());
     }
 
     match command.trim() {
@@ -63,7 +63,12 @@ async fn main() -> anyhow::Result<()> {
                 let http_trackers = torrent
                     .announce_list
                     .iter()
-                    .flat_map(|al| al.iter().filter(|a| a.starts_with("http://")).cloned().collect::<Vec<String>>())
+                    .flat_map(|al| {
+                        al.iter()
+                            .filter(|a| a.starts_with("http://"))
+                            .cloned()
+                            .collect::<Vec<String>>()
+                    })
                     .collect::<Vec<String>>();
                 if !http_trackers.is_empty() {
                     tracker_addr = http_trackers.first().unwrap().to_string();

@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, SocketAddr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
@@ -103,21 +103,26 @@ pub async fn announce(
                 ipbytes.copy_from_slice(&peer[0..4]);
                 let mut skbytes = [0u8; 2];
                 skbytes.copy_from_slice(&peer[4..6]);
-                SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::from(ipbytes)), u16::from_be_bytes(skbytes))
+                SocketAddr::new(
+                    std::net::IpAddr::V4(Ipv4Addr::from(ipbytes)),
+                    u16::from_be_bytes(skbytes),
+                )
             })
             .collect()),
         Ok(TrackerResponse::Success6(r)) => Ok(r
-                                               .peers6
-                                               .chunks(18)
-                                               .map(|peer| {
-                                                   let mut ipbytes = [0; 16];
-                                                   ipbytes.copy_from_slice(&peer[0..16]);
-                                                   let mut skbytes = [0u8; 2];
-                                                   skbytes.copy_from_slice(&peer[16..18]);
-                                                   SocketAddr::new(std::net::IpAddr::V6(Ipv6Addr::from(ipbytes)), u16::from_be_bytes(skbytes))
-                                               })
-                                               .collect()
-        ),
+            .peers6
+            .chunks(18)
+            .map(|peer| {
+                let mut ipbytes = [0; 16];
+                ipbytes.copy_from_slice(&peer[0..16]);
+                let mut skbytes = [0u8; 2];
+                skbytes.copy_from_slice(&peer[16..18]);
+                SocketAddr::new(
+                    std::net::IpAddr::V6(Ipv6Addr::from(ipbytes)),
+                    u16::from_be_bytes(skbytes),
+                )
+            })
+            .collect()),
         Err(e) => {
             eprintln!(
                 "error reading tracker data, data as json:\n{}",
