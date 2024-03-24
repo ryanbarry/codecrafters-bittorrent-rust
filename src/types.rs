@@ -26,8 +26,8 @@ pub enum InfoDict {
         #[serde(rename = "piece length")]
         piece_length: u32,
         pieces: ByteBuf,
-        files: Vec<InfoDictFile>
-    }
+        files: Vec<InfoDictFile>,
+    },
 }
 
 impl InfoDict {
@@ -54,9 +54,7 @@ impl InfoDict {
     pub fn length(&self) -> u32 {
         match &self {
             InfoDict::SingleFile { length, .. } => *length,
-            InfoDict::MultiFile { files, .. } => {
-                files.iter().map(|f| f.length).sum()
-            }
+            InfoDict::MultiFile { files, .. } => files.iter().map(|f| f.length).sum(),
         }
     }
 }

@@ -60,7 +60,8 @@ pub async fn announce(
             ("uploaded", "0"),
             ("downloaded", "0"),
         ])
-        .build().context("failed building tracker HTTP announcement request")?;
+        .build()
+        .context("failed building tracker HTTP announcement request")?;
     let q = req
         .url()
         .query()

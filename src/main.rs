@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddrV4, str::FromStr, arch::x86_64::_rdrand32_step};
+use std::{arch::x86_64::_rdrand32_step, env, net::SocketAddrV4, str::FromStr};
 
 use anyhow::Context;
 use tokio::{
@@ -20,8 +20,10 @@ async fn main() -> anyhow::Result<()> {
     let mut peer_id = [0u8; 20];
     for idx in 0..5 {
         let mut randval = 0;
-        unsafe {_rdrand32_step(&mut randval);}
-        peer_id[idx..idx+4].copy_from_slice(&randval.to_le_bytes());
+        unsafe {
+            _rdrand32_step(&mut randval);
+        }
+        peer_id[idx..idx + 4].copy_from_slice(&randval.to_le_bytes());
     }
 
     match command.trim() {
@@ -33,12 +35,18 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "peers" => {
-            let torrent = types::Metainfo::from_file(&args[2]).await.context("failed reading metainfo")?;
-            eprintln!("fetching peers from tracker at {}", torrent.announce);
+            let torrent = types::Metainfo::from_file(&args[2])
+                .await
+                .context("failed reading metainfo")?;
 
-            let peers =
-                tracker::announce(&torrent.announce, torrent.info.length(), torrent.info.hash()?, peer_id)
-                    .await?;
+            eprintln!("fetching peers from tracker at {}", torrent.announce);
+            let peers = tracker::announce(
+                &torrent.announce,
+                torrent.info.length(),
+                torrent.info.hash()?,
+                peer_id,
+            )
+            .await?;
             for p in peers.iter() {
                 println!("{}", p);
             }
@@ -91,9 +99,13 @@ async fn main() -> anyhow::Result<()> {
             // tracker contact
 
             eprintln!("fetching peers from tracker at {}", metainf.announce);
-            let peers =
-                tracker::announce(&metainf.announce, metainf.info.length(), metainf.info.hash()?, peer_id)
-                    .await?;
+            let peers = tracker::announce(
+                &metainf.announce,
+                metainf.info.length(),
+                metainf.info.hash()?,
+                peer_id,
+            )
+            .await?;
 
             // handshake begin
 
@@ -164,9 +176,13 @@ async fn main() -> anyhow::Result<()> {
             // tracker contact
 
             eprintln!("fetching peers from tracker at {}", metainf.announce);
-            let peers =
-                tracker::announce(&metainf.announce, metainf.info.length(), metainf.info.hash()?, peer_id)
-                    .await?;
+            let peers = tracker::announce(
+                &metainf.announce,
+                metainf.info.length(),
+                metainf.info.hash()?,
+                peer_id,
+            )
+            .await?;
 
             // handshake begin
 
@@ -240,7 +256,10 @@ async fn main() -> anyhow::Result<()> {
                 drop(input);
                 fs::remove_file(&pf).await?;
             }
-            eprintln!("copied pieces into outfile {} and removed piece files", outfile);
+            eprintln!(
+                "copied pieces into outfile {} and removed piece files",
+                outfile
+            );
 
             Ok(())
         }
