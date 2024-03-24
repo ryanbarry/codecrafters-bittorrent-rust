@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "peers" => {
-            let torrent = types::Metainfo::from_file(&args[2]).await?;
+            let torrent = types::Metainfo::from_file(&args[2]).await.context("failed reading metainfo")?;
             eprintln!("fetching peers from tracker at {}", torrent.announce);
 
             let peers =

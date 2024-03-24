@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -60,7 +60,7 @@ pub async fn announce(
             ("uploaded", "0"),
             ("downloaded", "0"),
         ])
-        .build()?;
+        .build().context("failed building tracker HTTP announcement request")?;
     let q = req
         .url()
         .query()
