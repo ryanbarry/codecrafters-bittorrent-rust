@@ -124,11 +124,12 @@ async fn main() -> anyhow::Result<()> {
             let peer_addr =
                 SocketAddr::from_str(&args[3]).context("failed to parse given peer address")?;
 
+            eprintln!("starting connection to peer {}", peer_addr);
             let mut peer = peer::PeerState::connect(peer_addr, &metainf)
                 .await
                 .context("failed to connect to peer")?;
 
-            peer.wait_for_handshake().await;
+            peer.wait_for_handshake().await?;
             println!("Peer ID: {}", hex::encode(peer.remote_peer_id()));
             Ok(())
         }
@@ -162,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
 
             let mut peer = peer::PeerState::connect(peers[0], &metainf).await?;
             eprintln!("waiting for handshake");
-            peer.wait_for_handshake().await;
+            peer.wait_for_handshake().await?;
 
             eprintln!("checking if i have peer's bitfield");
             while peer.bitfield().is_empty() {
@@ -239,7 +240,7 @@ async fn main() -> anyhow::Result<()> {
 
             let mut peer = peer::PeerState::connect(peers[0], &metainf).await?;
             eprintln!("waiting for handshake");
-            peer.wait_for_handshake().await;
+            peer.wait_for_handshake().await?;
 
             eprintln!("checking if i have peer's bitfield");
             while peer.bitfield().is_empty() {

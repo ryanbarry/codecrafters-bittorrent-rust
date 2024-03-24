@@ -1,13 +1,10 @@
-use anyhow::anyhow;
-use anyhow::Context;
+use std::arch::x86_64::_rdrand32_step;
+use std::{fmt, net::SocketAddr};
+
+use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
-use std::arch::x86_64::_rdrand32_step;
-use std::fmt;
-use std::net::SocketAddr;
-use tokio::io::{self, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio::time;
+use tokio::{io::{self, AsyncWriteExt}, net::TcpStream};
 
 const PIECE_CHUNK_SZ: u32 = 16 * 1024; // 16KiB
 
@@ -296,7 +293,7 @@ impl<'a> PeerState<'a> {
         self.their_peer_id
     }
 
-    pub async fn wait_for_handshake(&mut self) {
+    pub async fn wait_for_handshake(&mut self) -> anyhow::Result<()> {
         'ultimate: loop {
             'tryread: loop {
                 self.conn
@@ -306,8 +303,7 @@ impl<'a> PeerState<'a> {
                 // eprintln!("peer connection should be readable");
                 match self.conn.try_read_buf(&mut self.recv_buf) {
                     Ok(0) => {
-                        eprintln!("got 0 bytes");
-                        time::sleep(time::Duration::from_secs(1)).await;
+                        return Err(anyhow!("peer closed the connection"));
                     }
                     Ok(n) => {
                         eprintln!("got {} bytes from peer", n);
@@ -331,6 +327,7 @@ impl<'a> PeerState<'a> {
                 eprintln!("not enough bytes to start");
             }
         }
+        Ok(())
     }
 
     // TODO: kinds of error:
