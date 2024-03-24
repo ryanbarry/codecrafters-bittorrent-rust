@@ -342,9 +342,11 @@ impl PeerState {
     pub async fn get_piece(&mut self, piece_idx: u32) -> anyhow::Result<Vec<u8>> {
         // TODO: check/set interested state, message about the change if needed
 
-        let piece_len = self.metainfo.info.piece_length.min(
-            self.metainfo.info.length - self.metainfo.info.piece_length * piece_idx,
-        );
+        let piece_len = self
+            .metainfo
+            .info
+            .piece_length
+            .min(self.metainfo.info.length - self.metainfo.info.piece_length * piece_idx);
         eprintln!("expecting to get {} bytes for this piece", piece_len);
 
         while self.req_buf.iter().map(|rb| rb.buf.len()).sum::<usize>() < piece_len as usize {

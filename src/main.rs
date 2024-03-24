@@ -1,9 +1,4 @@
-use std::{
-    env,
-    net::SocketAddrV4,
-    path::Path,
-    str::FromStr,
-};
+use std::{env, net::SocketAddrV4, path::Path, str::FromStr};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -129,7 +124,12 @@ async fn main() -> anyhow::Result<()> {
         "peers" => {
             let torrent = Metainfo::from_file(&args[2]).await?;
             eprintln!("fetching peers from tracker at {}", torrent.announce);
-            let peers = tracker::Tracker::get_peers(torrent.announce, torrent.info.length, torrent.info.hash()?).await?;
+            let peers = tracker::Tracker::get_peers(
+                torrent.announce,
+                torrent.info.length,
+                torrent.info.hash()?,
+            )
+            .await?;
             for p in peers.iter() {
                 println!("{}", p);
             }
@@ -182,7 +182,12 @@ async fn main() -> anyhow::Result<()> {
             // tracker contact
 
             eprintln!("fetching peers from tracker at {}", metainf.announce);
-            let peers = tracker::Tracker::get_peers(metainf.announce.clone(), metainf.info.length, metainf.info.hash()?).await?;
+            let peers = tracker::Tracker::get_peers(
+                metainf.announce.clone(),
+                metainf.info.length,
+                metainf.info.hash()?,
+            )
+            .await?;
 
             // handshake begin
 
