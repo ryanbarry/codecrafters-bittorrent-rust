@@ -28,7 +28,7 @@ enum TrackerResponse {
 }
 
 pub async fn get_peers(
-    tracker_addr: String,
+    tracker_addr: &str,
     left: u32,
     infohash: [u8; 20],
 ) -> anyhow::Result<Vec<SocketAddrV4>> {

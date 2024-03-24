@@ -13,7 +13,7 @@ use tokio::{
 mod peer;
 mod tracker;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct InfoDict {
     name: String,
     #[serde(rename = "piece length")]
@@ -30,7 +30,7 @@ impl InfoDict {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Metainfo {
     announce: String,
     info: InfoDict,
@@ -125,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
             let torrent = Metainfo::from_file(&args[2]).await?;
             eprintln!("fetching peers from tracker at {}", torrent.announce);
             let peers = tracker::get_peers(
-                torrent.announce,
+                &torrent.announce,
                 torrent.info.length,
                 torrent.info.hash()?,
             )
@@ -156,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
             let peer_addr =
                 SocketAddrV4::from_str(&args[3]).context("failed to parse given peer address")?;
 
-            let mut peer = peer::PeerState::connect(peer_addr, metainf)
+            let mut peer = peer::PeerState::connect(peer_addr, &metainf)
                 .await
                 .context("failed to connect to peer")?;
 
@@ -183,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
 
             eprintln!("fetching peers from tracker at {}", metainf.announce);
             let peers = tracker::get_peers(
-                metainf.announce.clone(),
+                &metainf.announce,
                 metainf.info.length,
                 metainf.info.hash()?,
             )
@@ -191,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
 
             // handshake begin
 
-            let mut peer = peer::PeerState::connect(peers[0], metainf).await?;
+            let mut peer = peer::PeerState::connect(peers[0], &metainf).await?;
             eprintln!("waiting for handshake");
             peer.wait_for_handshake().await;
 
@@ -238,6 +238,83 @@ async fn main() -> anyhow::Result<()> {
                 .context("error writing out piece buffer to file")?;
 
             println!("Piece {} downloaded to {}", piece_idx, outfile);
+
+            Ok(())
+        }
+        "download" => {
+            assert_eq!(
+                args[2],
+                "-o".to_string(),
+                "output must be specified with -o <filepath> as 2nd & 3rd args"
+            );
+
+            let outfile = &args[3];
+            let mi_file = &args[4];
+
+            let metainf = Metainfo::from_file(mi_file)
+                .await
+                .context("failed to read metainfo file")?;
+
+            // tracker contact
+
+            eprintln!("fetching peers from tracker at {}", metainf.announce);
+            let peers = tracker::get_peers(
+                &metainf.announce,
+                metainf.info.length,
+                metainf.info.hash()?,
+            )
+            .await?;
+
+            // handshake begin
+
+            let mut peer = peer::PeerState::connect(peers[0], &metainf).await?;
+            eprintln!("waiting for handshake");
+            peer.wait_for_handshake().await;
+
+            eprintln!("checking if i have peer's bitfield");
+            while peer.bitfield().is_empty() {
+                let msgs = peer.poll().await?;
+                if msgs.is_empty() {
+                    eprintln!("got nothing from peer this round");
+                } else {
+                    for m in msgs {
+                        eprintln!("waiting for bitfield, got: {:?}", m);
+                    }
+                }
+            }
+
+            eprintln!("indicating interest");
+            peer.indicate_interest().await?;
+
+            eprintln!("checking if peer is choking");
+            while peer.choking() {
+                let msgs = peer.poll().await?;
+                for m in msgs {
+                    eprintln!("waiting for unchoke, got: {:?}", m);
+                }
+            }
+
+            for (piece_idx, _piece_hash) in metainf.info.pieces.iter().enumerate() {
+                let piece_idx = piece_idx as u32;
+                eprintln!("fetching piece {}", piece_idx);
+                let piece_buf = peer
+                    .get_piece(
+                        piece_idx
+                    )
+                    .await?;
+
+                let mut f = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(outfile.to_string() + ".part" + &format!("{:3}", piece_idx))
+                    .await
+                    .context("error opening file for writing piece")?;
+                f.write_all(&piece_buf)
+                 .await
+                 .context("error writing out piece buffer to file")?;
+
+                println!("Piece {} downloaded to {}", piece_idx, outfile);
+            }
 
             Ok(())
         }

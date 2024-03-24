@@ -223,7 +223,7 @@ struct PieceRequest {
 }
 
 #[allow(dead_code)]
-pub struct PeerState {
+pub struct PeerState<'a> {
     their_peer_id: [u8; 20],
     im_choked: bool,
     theyre_choked: bool,
@@ -233,7 +233,7 @@ pub struct PeerState {
     their_bitfield: Vec<u8>,
     remote: SocketAddrV4,
     conn: TcpStream,
-    metainfo: crate::Metainfo,
+    metainfo: &'a crate::Metainfo,
     recv_buf: Vec<u8>,
     pub piece_buf: Vec<u8>,
     req_buf: Vec<PieceRequest>,
@@ -247,8 +247,8 @@ pub struct PeerState {
 //   wait for some bytes
 //   try to read a message from what was received
 
-impl PeerState {
-    pub async fn connect(remote: SocketAddrV4, metainfo: crate::Metainfo) -> anyhow::Result<Self> {
+impl<'a> PeerState<'a> {
+    pub async fn connect(remote: SocketAddrV4, metainfo: &'a crate::Metainfo) -> anyhow::Result<Self> {
         let mut peerconn = TcpStream::connect(remote)
             .await
             .context("failed to connect to peer")?;
