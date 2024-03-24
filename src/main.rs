@@ -59,13 +59,13 @@ async fn main() -> anyhow::Result<()> {
 
             let mut tracker_addr = torrent.announce;
 
-            if torrent.announce_list.len() > 0 {
+            if !torrent.announce_list.is_empty() {
                 let http_trackers = torrent
                     .announce_list
                     .iter()
                     .flat_map(|al| al.iter().filter(|a| a.starts_with("http://")).cloned().collect::<Vec<String>>())
                     .collect::<Vec<String>>();
-                if http_trackers.len() > 0 {
+                if !http_trackers.is_empty() {
                     tracker_addr = http_trackers.first().unwrap().to_string();
                 }
             }
