@@ -156,10 +156,12 @@ async fn main() -> anyhow::Result<()> {
                 peer_id,
             )
             .await?;
+            eprintln!("got peers: {:?}", peers);
 
             // handshake begin
-
-            let mut peer = peer::PeerState::connect(peers[0], &metainf).await?;
+            let selected_peer = peers[0];
+            eprintln!("chose peer: {}", selected_peer);
+            let mut peer = peer::PeerState::connect(selected_peer, &metainf).await?;
             eprintln!("waiting for handshake");
             peer.wait_for_handshake().await?;
 
