@@ -45,7 +45,7 @@ fn urlenc<B: AsRef<[u8]>>(bytes: B) -> String {
 
 pub async fn announce(
     tracker_addr: &str,
-    left: u32,
+    left: u64,
     infohash: [u8; 20],
     my_peer_id: [u8; 20],
 ) -> anyhow::Result<Vec<SocketAddr>> {

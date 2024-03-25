@@ -343,7 +343,7 @@ impl<'a> PeerState<'a> {
             .metainfo
             .info
             .piece_length()
-            .min(self.metainfo.info.length() - self.metainfo.info.piece_length() * piece_idx);
+            .min((self.metainfo.info.length() - (self.metainfo.info.piece_length() as u64) * piece_idx as u64) as u32);
         eprintln!("expecting to get {} bytes for this piece", piece_len);
 
         while self.req_buf.iter().map(|rb| rb.buf.len()).sum::<usize>() < piece_len as usize {

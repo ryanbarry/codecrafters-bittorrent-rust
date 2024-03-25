@@ -7,7 +7,7 @@ use tokio::{fs::File, io::AsyncReadExt};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct InfoDictFile {
-    pub length: u32,
+    pub length: u64,
     pub path: Vec<String>,
 }
 
@@ -19,7 +19,7 @@ pub enum InfoDict {
         #[serde(rename = "piece length")]
         piece_length: u32,
         pieces: ByteBuf,
-        length: u32,
+        length: u64,
     },
     MultiFile {
         name: String,
@@ -51,7 +51,7 @@ impl InfoDict {
         }
     }
 
-    pub fn length(&self) -> u32 {
+    pub fn length(&self) -> u64 {
         match &self {
             InfoDict::SingleFile { length, .. } => *length,
             InfoDict::MultiFile { files, .. } => files.iter().map(|f| f.length).sum(),
