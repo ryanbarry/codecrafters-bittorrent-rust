@@ -66,6 +66,17 @@ pub struct Metainfo {
     #[serde(rename = "announce-list")]
     #[serde(default)]
     pub announce_list: Vec<Vec<String>>,
+    #[serde(rename = "url-list")]
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub url_list: Vec<String>,
+    #[serde(default)]
+    #[serde(rename = "created by")]
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub created_by: String,
+    #[serde(rename = "creation date")]
+    #[serde(default)]
+    pub creation_date: u64,
 }
 
 impl Metainfo {
