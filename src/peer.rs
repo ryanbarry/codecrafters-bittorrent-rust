@@ -96,7 +96,7 @@ impl fmt::Debug for PeerMessage {
             Self::Interested {} => write!(f, "Interested {{  }}"),
             Self::NotInterested {} => write!(f, "NotInterested {{  }}"),
             Self::Have { index } => write!(f, "Have {{ {} }}", index),
-            Self::Bitfield { sent_indices } => write!(f, "Bitfield {{ {:?} }}", sent_indices),
+            Self::Bitfield { sent_indices } => write!(f, "Bitfield {{ [size:{}] }}", sent_indices.len()),
             Self::Request {
                 index,
                 begin,
