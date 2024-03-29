@@ -155,8 +155,13 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("got peers: {:?}", peers);
 
             // handshake begin
-            let selected_peer = peers[0];
-            eprintln!("chose peer: {}", selected_peer);
+            let rand_peer_idx = {
+                let mut rand = 7u32;
+                unsafe { _rdrand32_step(&mut rand); }
+                rand as usize % peers.len()
+            };
+            let selected_peer = peers[rand_peer_idx];
+            eprintln!("chose peers[{}]: {}", rand_peer_idx, selected_peer);
             let mut peer = peer::PeerState::connect(selected_peer, &metainf).await?;
             eprintln!("waiting for handshake");
             peer.wait_for_handshake().await?;
