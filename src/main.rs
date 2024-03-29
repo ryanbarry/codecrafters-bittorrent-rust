@@ -70,17 +70,13 @@ async fn main() -> anyhow::Result<()> {
 
             eprintln!("found {} http trackers", http_trackers.len());
 
-            let mut peers = vec![];
-            for ht in http_trackers {
-                eprintln!("fetching peers from tracker at {}", ht);
-                peers.append(&mut tracker::announce(
-                    &ht,
-                    torrent.info.length(),
-                    torrent.info.hash()?,
-                    peer_id,
-                )
-                           .await?);
-            }
+            eprintln!("fetching peers from tracker at {}", http_trackers[0]);
+            let peers = &mut tracker::announce(
+                &http_trackers[0],
+                torrent.info.length(),
+                torrent.info.hash()?,
+                peer_id,
+            ).await?;
             for p in peers.iter() {
                 println!("{}", p);
             }
