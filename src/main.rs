@@ -1,5 +1,5 @@
-use std::{arch::x86_64::_rdrand32_step, env, net::SocketAddr, str::FromStr};
 use clap::{Parser, Subcommand};
+use std::{arch::x86_64::_rdrand32_step, net::SocketAddr, path::PathBuf};
 
 use anyhow::Context;
 use tokio::{
@@ -13,7 +13,8 @@ mod types;
 mod utils;
 
 #[derive(Parser, Debug)]
-pub struct Args {
+#[command(author, version, about, long_about = None)]
+pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -23,20 +24,40 @@ pub enum Commands {
     Decode {
         bencoded: String,
     },
-    Peers,
-    Peers2,
-    Info,
-    Info2,
-    Handshake,
-    DownloadPiece,
-    Download,
+    Peers {
+        torrent_file_path: PathBuf,
+    },
+    Peers2 {
+        torrent_file_path: PathBuf,
+    },
+    Info {
+        torrent_file_path: PathBuf,
+    },
+    Info2 {
+        torrent_file_path: PathBuf,
+    },
+    Handshake {
+        torrent_file_path: PathBuf,
+        peer_address: SocketAddr,
+    },
+    #[command(name = "download_piece")]
+    DownloadPiece {
+        #[arg(short = 'o')]
+        downloaded_file_path: PathBuf,
+        torrent_file_path: PathBuf,
+        piece_index: u32,
+    },
+    Download {
+        #[arg(short = 'o')]
+        downloaded_file_path: PathBuf,
+        torrent_file_path: PathBuf,
+    },
 }
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = env::args().collect();
-    let command = &args[1];
+    let cli = Cli::parse();
 
     let mut peer_id = [0u8; 20];
     for idx in 0..5 {
@@ -47,16 +68,18 @@ async fn main() -> anyhow::Result<()> {
         peer_id[idx * 4..idx * 4 + 4].copy_from_slice(&randval.to_le_bytes());
     }
 
-    match command.trim() {
-        "decode" => {
+    match cli.command {
+        // "decode" => {
+        Commands::Decode { bencoded } => {
             let deser: serde_bencode::value::Value =
-                serde_bencode::from_str(&args[2]).expect("could not deserialize value");
+                serde_bencode::from_str(&bencoded).expect("could not deserialize value");
             let json = utils::convert_bencode_to_json(deser)?;
             println!("{}", json);
             Ok(())
         }
-        "peers" => {
-            let torrent = types::Metainfo::from_file(&args[2])
+        // "peers" => {
+        Commands::Peers { torrent_file_path } => {
+            let torrent = types::Metainfo::from_file(torrent_file_path)
                 .await
                 .context("failed reading metainfo")?;
 
@@ -73,8 +96,9 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        "peers2" => {
-            let torrent = types::Metainfo::from_file(&args[2])
+        // "peers2" => {
+        Commands::Peers2 { torrent_file_path } => {
+            let torrent = types::Metainfo::from_file(torrent_file_path)
                 .await
                 .context("failed reading metainfo")?;
 
@@ -83,9 +107,9 @@ async fn main() -> anyhow::Result<()> {
                 .iter()
                 .flat_map(|al| {
                     al.iter()
-                      .filter(|a| a.starts_with("http://"))
-                      .cloned()
-                      .collect::<Vec<String>>()
+                        .filter(|a| a.starts_with("http://"))
+                        .cloned()
+                        .collect::<Vec<String>>()
                 })
                 .collect::<Vec<String>>();
 
@@ -97,14 +121,16 @@ async fn main() -> anyhow::Result<()> {
                 torrent.info.length(),
                 torrent.info.hash()?,
                 peer_id,
-            ).await?;
+            )
+            .await?;
             for p in peers.iter() {
                 println!("{}", p);
             }
             Ok(())
         }
-        "info" => {
-            let metainf = types::Metainfo::from_file(&args[2])
+        // "info" => {
+        Commands::Info { torrent_file_path } => {
+            let metainf = types::Metainfo::from_file(torrent_file_path)
                 .await
                 .context("failed to read metainfo file")?;
             println!("Tracker URL: {}", metainf.announce);
@@ -117,8 +143,9 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        "info2" => {
-            let metainf = types::Metainfo::from_file(&args[2])
+        // "info2" => {
+        Commands::Info2 { torrent_file_path } => {
+            let metainf = types::Metainfo::from_file(torrent_file_path)
                 .await
                 .context("failed to read metainfo file")?;
             println!("Tracker URL: {}", metainf.announce);
@@ -132,15 +159,17 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        "handshake" => {
-            let metainf = types::Metainfo::from_file(&args[2])
+        // "handshake" => {
+        Commands::Handshake {
+            torrent_file_path,
+            peer_address,
+        } => {
+            let metainf = types::Metainfo::from_file(torrent_file_path)
                 .await
                 .context("failed to read metainfo file")?;
-            let peer_addr =
-                SocketAddr::from_str(&args[3]).context("failed to parse given peer address")?;
 
-            eprintln!("starting connection to peer {}", peer_addr);
-            let mut peer = peer::PeerState::connect(peer_addr, &metainf)
+            eprintln!("starting connection to peer {}", peer_address);
+            let mut peer = peer::PeerState::connect(peer_address, &metainf)
                 .await
                 .context("failed to connect to peer")?;
 
@@ -148,18 +177,13 @@ async fn main() -> anyhow::Result<()> {
             println!("Peer ID: {}", hex::encode(peer.remote_peer_id()));
             Ok(())
         }
-        "download_piece" => {
-            assert_eq!(
-                args[2],
-                "-o".to_string(),
-                "output must be specified with -o <filepath> as 2nd & 3rd args"
-            );
-
-            let outfile = &args[3];
-            let mi_file = &args[4];
-            let piece_idx = &args[5];
-
-            let metainf = types::Metainfo::from_file(mi_file)
+        // "download_piece" => {
+        Commands::DownloadPiece {
+            downloaded_file_path,
+            torrent_file_path,
+            piece_index,
+        } => {
+            let metainf = types::Metainfo::from_file(torrent_file_path)
                 .await
                 .context("failed to read metainfo file")?;
 
@@ -178,7 +202,9 @@ async fn main() -> anyhow::Result<()> {
             // handshake begin
             let rand_peer_idx = {
                 let mut rand = 7u32;
-                unsafe { _rdrand32_step(&mut rand); }
+                unsafe {
+                    _rdrand32_step(&mut rand);
+                }
                 rand as usize % peers.len()
             };
             let selected_peer = peers[rand_peer_idx];
@@ -211,39 +237,32 @@ async fn main() -> anyhow::Result<()> {
             }
 
             eprintln!("fetching piece");
-            let piece_buf = peer
-                .get_piece(
-                    piece_idx
-                        .parse()
-                        .context("could not parse given piece index")?,
-                )
-                .await?;
+            let piece_buf = peer.get_piece(piece_index).await?;
 
             let mut f = OpenOptions::new()
                 .write(true)
                 .create(true)
-                .open(outfile)
+                .open(&downloaded_file_path)
                 .await
                 .context("error opening file for writing piece")?;
             f.write_all(&piece_buf)
                 .await
                 .context("error writing out piece buffer to file")?;
 
-            println!("Piece {} downloaded to {}", piece_idx, outfile);
+            println!(
+                "Piece {} downloaded to {}",
+                piece_index,
+                downloaded_file_path.display()
+            );
 
             Ok(())
         }
-        "download" => {
-            assert_eq!(
-                args[2],
-                "-o".to_string(),
-                "output must be specified with -o <filepath> as 2nd & 3rd args"
-            );
-
-            let outfile = &args[3];
-            let mi_file = &args[4];
-
-            let metainf = types::Metainfo::from_file(mi_file)
+        // "download" => {
+        Commands::Download {
+            downloaded_file_path,
+            torrent_file_path,
+        } => {
+            let metainf = types::Metainfo::from_file(torrent_file_path)
                 .await
                 .context("failed to read metainfo file")?;
 
@@ -289,16 +308,21 @@ async fn main() -> anyhow::Result<()> {
 
             let mut piece_files = vec![];
 
-            for (piece_idx, piece_hash) in metainf.info.pieces().chunks(20).enumerate() {
-                let piece_idx = piece_idx as u32;
+            for (piece_index, piece_hash) in metainf.info.pieces().chunks(20).enumerate() {
+                let piece_index = piece_index as u32;
                 eprintln!(
                     "fetching piece {} with hash {}",
-                    piece_idx,
+                    piece_index,
                     hex::encode(piece_hash)
                 );
-                let piece_buf = peer.get_piece(piece_idx).await?;
+                let piece_buf = peer.get_piece(piece_index).await?;
 
-                let piece_filename = outfile.to_string() + ".part" + &format!("{:03}", piece_idx);
+                let piece_filename = downloaded_file_path
+                    .to_str()
+                    .expect("need download path")
+                    .to_owned()
+                    + ".part"
+                    + &format!("{:03}", piece_index);
                 let mut f = OpenOptions::new()
                     .write(true)
                     .create(true)
@@ -309,14 +333,14 @@ async fn main() -> anyhow::Result<()> {
                     .await
                     .context("error writing out piece buffer to file")?;
 
-                eprintln!("Piece {} downloaded to {}", piece_idx, &piece_filename);
+                eprintln!("Piece {} downloaded to {}", piece_index, &piece_filename);
                 piece_files.push(piece_filename);
             }
 
             let mut output = OpenOptions::new()
                 .write(true)
                 .create(true)
-                .open(outfile)
+                .open(&downloaded_file_path)
                 .await
                 .context("error opening out file")?;
             for pf in piece_files {
@@ -332,13 +356,10 @@ async fn main() -> anyhow::Result<()> {
             }
             eprintln!(
                 "copied pieces into outfile {} and removed piece files",
-                outfile
+                downloaded_file_path.display()
             );
 
             Ok(())
-        }
-        _ => {
-            anyhow::bail!("unknown command: {}", args[1])
         }
     }
 }
