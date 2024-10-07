@@ -1,4 +1,5 @@
 use std::{arch::x86_64::_rdrand32_step, env, net::SocketAddr, str::FromStr};
+use clap::{Parser, Subcommand};
 
 use anyhow::Context;
 use tokio::{
@@ -10,6 +11,26 @@ mod peer;
 mod tracker;
 mod types;
 mod utils;
+
+#[derive(Parser, Debug)]
+pub struct Args {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    Decode {
+        bencoded: String,
+    },
+    Peers,
+    Peers2,
+    Info,
+    Info2,
+    Handshake,
+    DownloadPiece,
+    Download,
+}
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 #[tokio::main]
