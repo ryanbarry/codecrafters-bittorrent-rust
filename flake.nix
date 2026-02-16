@@ -1,55 +1,50 @@
 {
   inputs = {
-    naersk.url = "github:nix-community/naersk/master";
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    utils.url = "github:numtide/flake-utils";
-    nixpkgs-mozilla = {
-      url = "github:mozilla/nixpkgs-mozilla";
-      flake = false;
+    nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1.*.tar.gz";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, utils, naersk, nixpkgs-mozilla }:
-    utils.lib.eachDefaultSystem (system:
-      let
+  outputs = { self, nixpkgs, rust-overlay }:
+    let
+      supportedSystems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      forEachSupportedSystem = f: nixpkgs.lib.genAttrs supportedSystems (system: f {
         pkgs = import nixpkgs {
           inherit system;
-
-          overlays = [
-            (import nixpkgs-mozilla)
-          ];
-        };
-
-        toolchain = (pkgs.rustChannelOf {
-          rustToolchain = ./rust-toolchain;
-          sha256 = "sha256-e4mlaJehWBymYxJGgnbuCObVlqMlQSilZ8FljG9zPHY=";
-        }).rust.override (old: {
-          extensions = [ "rust-src" "rust-analysis" ];
-        });
-
-        naersk-lib = pkgs.callPackage naersk {
-          cargo = toolchain;
-          rustc = toolchain;
-        };
-      in
-      {
-        defaultPackage = naersk-lib.buildPackage {
-          src = ./.;
-          nativeBuildInputs = with pkgs; [ pkg-config ];
-          buildInputs = with pkgs; [ openssl ];
-        };
-
-        defaultApp = utils.lib.mkApp {
-          drv = self.defaultPackage."${system}";
-        };
-
-        devShell = with pkgs; mkShell {
-          nativeBuildInputs = [ pkg-config ];
-          buildInputs = [
-            toolchain
-            openssl # need to add this for use by the openssl-sys crate
-          ];
-          RUST_LOG = "trace";
+          overlays = [ rust-overlay.overlays.default self.overlays.default ];
         };
       });
+    in
+      {
+        overlays.default = final: prev: {
+          rustToolchain =
+            let
+              rust = prev.rust-bin;
+            in
+              if builtins.pathExists ./rust-toolchain.toml then
+                rust.fromRustupToolchainFile ./rust-toolchain.toml
+              else if builtins.pathExists ./rust-toolchain then
+                rust.fromRustupToolchainFile ./rust-toolchain
+              else
+                rust.stable.latest.default.override {
+                  extensions = [ "rust-src" "rustfmt" ];
+                };
+        };
+
+        devShells = forEachSupportedSystem ({ pkgs }: {
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              rustToolchain
+              pkg-config
+              openssl.dev # need to add this for use by the openssl-sys crate
+            ];
+            env = {
+              RUST_LOG = "trace";
+              #LD_LIBRARY_PATH = with pkgs; lib.makeLibraryPath [ openssl ];
+            };
+          };
+        });
+      };
 }
