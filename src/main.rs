@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::{arch::x86_64::_rdrand32_step, net::SocketAddr, path::PathBuf};
+use std::{arch::x86_64::_rdrand32_step, collections::HashMap, net::SocketAddr, path::PathBuf};
 
 use anyhow::Context;
 use tokio::{
@@ -51,6 +51,10 @@ pub enum Commands {
         #[arg(short = 'o')]
         downloaded_file_path: PathBuf,
         torrent_file_path: PathBuf,
+    },
+    #[command(name = "magnet_parse")]
+    MagnetParse {
+        magnet_link: String,
     },
 }
 
@@ -358,6 +362,36 @@ async fn main() -> anyhow::Result<()> {
                 "copied pieces into outfile {} and removed piece files",
                 downloaded_file_path.display()
             );
+
+            Ok(())
+        }
+        // "magent_parse" => {
+        Commands::MagnetParse { magnet_link } => {
+            let link = match reqwest::Url::parse(&magnet_link) {
+                Ok(url) => url,
+                Err(e) => {
+                    eprintln!("failed to parse given magnet link: {e}");
+                    return Ok(());
+                }
+            };
+
+            let link_query: HashMap<String, String> = link
+                .query_pairs()
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect();
+
+            let tracker = link_query
+                .get("tr")
+                .expect("tr query param not found, but is required");
+
+            let info_hash = link_query
+                .get("xt")
+                .expect("xt query param not found, but is required")
+                .strip_prefix("urn:btih:")
+                .expect("xt query param value missing urn:btih: prefix");
+
+            println!("Tracker URL: {tracker}");
+            println!("Info Hash: {info_hash}");
 
             Ok(())
         }
