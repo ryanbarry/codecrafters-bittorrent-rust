@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
@@ -86,5 +87,54 @@ impl Metainfo {
         let mut contents = Vec::with_capacity(fsz.try_into()?);
         file.read_to_end(&mut contents).await?;
         Ok(serde_bencode::from_bytes(&contents)?)
+    }
+}
+
+pub struct MagnetLink {
+    pub xt: [u8; 20],
+    pub dn: Option<String>,
+    pub tr: Option<Vec<String>>,
+    pub xpe: Option<Vec<String>>,
+}
+
+impl MagnetLink {
+    pub fn parse<S: AsRef<str>>(link_text: S) -> anyhow::Result<Self> {
+        let link = reqwest::Url::parse(link_text.as_ref()).context("parsing magnet link as URL")?;
+
+        let link_query: HashMap<String, String> = link
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+
+        let tracker = link_query
+            .get("tr")
+            .context("tr query param not found, but is required")?;
+
+        let info_hash_hex = link_query
+            .get("xt")
+            .expect("xt query param not found, but is required")
+            .strip_prefix("urn:btih:")
+            .context("xt query param value missing urn:btih: prefix")?;
+
+        let mut info_hash: [u8; 20] = [0u8; 20];
+        hex::decode_to_slice(info_hash_hex, &mut info_hash)?;
+
+        Ok(Self {
+            dn: None,
+            tr: Some(vec![tracker.to_string()]),
+            xt: info_hash,
+            xpe: None,
+        })
+    }
+
+    pub fn info_hash_hex(&self) -> String {
+        hex::encode(self.xt)
+    }
+
+    pub fn tracker_url(&self, index: usize) -> Option<String> {
+        match &self.tr {
+            None => None,
+            Some(tr) => tr.get(index).cloned(),
+        }
     }
 }
