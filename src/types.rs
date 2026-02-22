@@ -90,10 +90,14 @@ impl Metainfo {
     }
 }
 
+#[allow(unused)]
 pub struct MagnetLink {
-    pub xt: [u8; 20],
+    pub info_hash: [u8; 20],
+    // display name
     pub dn: Option<String>,
+    // tracker(s)
     pub tr: Option<Vec<String>>,
+    // peer address(es)
     pub xpe: Option<Vec<String>>,
 }
 
@@ -106,29 +110,27 @@ impl MagnetLink {
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
             .collect();
 
-        let tracker = link_query
-            .get("tr")
-            .context("tr query param not found, but is required")?;
+        let tracker = link_query.get("tr");
 
         let info_hash_hex = link_query
             .get("xt")
             .expect("xt query param not found, but is required")
             .strip_prefix("urn:btih:")
-            .context("xt query param value missing urn:btih: prefix")?;
+            .context("xt query param value must begin with urn:btih: prefix")?;
 
         let mut info_hash: [u8; 20] = [0u8; 20];
         hex::decode_to_slice(info_hash_hex, &mut info_hash)?;
 
         Ok(Self {
             dn: None,
-            tr: Some(vec![tracker.to_string()]),
-            xt: info_hash,
+            tr: tracker.map(|ts| vec![ts.clone()]),
+            info_hash,
             xpe: None,
         })
     }
 
     pub fn info_hash_hex(&self) -> String {
-        hex::encode(self.xt)
+        hex::encode(self.info_hash)
     }
 
     pub fn tracker_url(&self, index: usize) -> Option<String> {

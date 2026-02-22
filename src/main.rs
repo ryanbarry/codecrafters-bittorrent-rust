@@ -368,13 +368,13 @@ async fn main() -> anyhow::Result<()> {
         }
         // "magent_parse" => {
         Commands::MagnetParse { magnet_link } => {
-            let maglink = MagnetLink::parse(magnet_link)?;
+            let maglink = MagnetLink::parse(magnet_link).context("parsing magnet link")?;
 
             println!(
                 "Tracker URL: {}",
                 maglink
                     .tracker_url(0)
-                    .expect("tracker URL required but not found")
+                    .context("tracker URL required but not found")?
             );
             println!("Info Hash: {}", maglink.info_hash_hex());
 
