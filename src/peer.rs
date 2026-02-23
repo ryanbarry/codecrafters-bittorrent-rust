@@ -21,26 +21,22 @@ pub struct PeerHandshake {
 }
 
 impl PeerHandshake {
-    fn new(info_hash: [u8; 20], peer_id: [u8; 20]) -> Self {
+    fn new(info_hash: &[u8; 20], peer_id: &[u8; 20]) -> Self {
         PeerHandshake {
             version: 19,
             proto: *b"BitTorrent protocol",
             reserved: [0; 8],
-            info_hash,
-            peer_id,
+            info_hash: info_hash.clone(),
+            peer_id: peer_id.clone(),
         }
     }
 
     /// creates a handshake that indicates this peer supports extended messaging
     /// as defined in BEP: https://www.bittorrent.org/beps/bep_0010.html
     fn new_ext(info_hash: &[u8; 20], peer_id: &[u8; 20]) -> Self {
-        PeerHandshake {
-            version: 19,
-            proto: *b"BitTorrent protocol",
-            reserved: [0, 0, 0, 0, 0, 0x10, 0, 0],
-            info_hash: info_hash.clone(),
-            peer_id: peer_id.clone(),
-        }
+        let mut hs = Self::new(info_hash, peer_id);
+        hs.reserved = [0, 0, 0, 0, 0, 0x10, 0, 0];
+        hs
     }
 
     fn to_bytes(&self) -> [u8; 68] {
@@ -268,7 +264,7 @@ impl<'a> PeerState<'a> {
         let mut peerconn = TcpStream::connect(remote)
             .await
             .context("failed to connect to peer")?;
-        let my_hand = PeerHandshake::new(metainfo.info.hash()?, *b"00112233445566778899");
+        let my_hand = PeerHandshake::new(&metainfo.info.hash()?, b"00112233445566778899");
         peerconn
             .write_all(&my_hand.to_bytes())
             .await
