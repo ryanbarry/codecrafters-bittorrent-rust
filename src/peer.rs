@@ -259,12 +259,13 @@ pub struct PeerState<'a> {
 impl<'a> PeerState<'a> {
     pub async fn connect(
         remote: SocketAddr,
+        my_id: &[u8; 20],
         metainfo: &'a crate::types::Metainfo,
     ) -> anyhow::Result<Self> {
         let mut peerconn = TcpStream::connect(remote)
             .await
             .context("failed to connect to peer")?;
-        let my_hand = PeerHandshake::new(&metainfo.info.hash()?, b"00112233445566778899");
+        let my_hand = PeerHandshake::new(&metainfo.info.hash()?, my_id);
         peerconn
             .write_all(&my_hand.to_bytes())
             .await

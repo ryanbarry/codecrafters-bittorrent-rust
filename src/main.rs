@@ -178,7 +178,7 @@ async fn main() -> anyhow::Result<()> {
                 .context("failed to read metainfo file")?;
 
             eprintln!("starting connection to peer {}", peer_address);
-            let mut peer = peer::PeerState::connect(peer_address, &metainf)
+            let mut peer = peer::PeerState::connect(peer_address, &peer_id, &metainf)
                 .await
                 .context("failed to connect to peer")?;
 
@@ -218,7 +218,7 @@ async fn main() -> anyhow::Result<()> {
             };
             let selected_peer = peers[rand_peer_idx];
             eprintln!("chose peers[{}]: {}", rand_peer_idx, selected_peer);
-            let mut peer = peer::PeerState::connect(selected_peer, &metainf).await?;
+            let mut peer = peer::PeerState::connect(selected_peer, &peer_id, &metainf).await?;
             eprintln!("waiting for handshake");
             peer.wait_for_handshake().await?;
 
@@ -288,7 +288,7 @@ async fn main() -> anyhow::Result<()> {
 
             // handshake begin
 
-            let mut peer = peer::PeerState::connect(peers[0], &metainf).await?;
+            let mut peer = peer::PeerState::connect(peers[0], &peer_id, &metainf).await?;
             eprintln!("waiting for handshake");
             peer.wait_for_handshake().await?;
 
