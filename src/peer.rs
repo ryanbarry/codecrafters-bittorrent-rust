@@ -233,7 +233,7 @@ struct PieceRequest {
 }
 
 #[allow(dead_code)]
-pub struct PeerState<'a> {
+pub struct PeerState {
     their_peer_id: [u8; 20],
     im_choked: bool,
     theyre_choked: bool,
@@ -243,7 +243,6 @@ pub struct PeerState<'a> {
     their_bitfield: Vec<u8>,
     remote: SocketAddr,
     conn: TcpStream,
-    metainfo: &'a crate::types::Metainfo,
     recv_buf: Vec<u8>,
     req_buf: Vec<PieceRequest>,
 }
@@ -256,16 +255,16 @@ pub struct PeerState<'a> {
 //   wait for some bytes
 //   try to read a message from what was received
 
-impl<'a> PeerState<'a> {
+impl PeerState {
     pub async fn connect(
         remote: SocketAddr,
+        info_hash: &[u8; 20],
         my_id: &[u8; 20],
-        metainfo: &'a crate::types::Metainfo,
     ) -> anyhow::Result<Self> {
         let mut peerconn = TcpStream::connect(remote)
             .await
             .context("failed to connect to peer")?;
-        let my_hand = PeerHandshake::new(&metainfo.info.hash()?, my_id);
+        let my_hand = PeerHandshake::new(info_hash, my_id);
         peerconn
             .write_all(&my_hand.to_bytes())
             .await
@@ -281,7 +280,6 @@ impl<'a> PeerState<'a> {
             their_bitfield: vec![],
             remote,
             conn: peerconn,
-            metainfo,
             recv_buf: vec![],
             req_buf: vec![],
         })
@@ -291,7 +289,6 @@ impl<'a> PeerState<'a> {
         remote: SocketAddr,
         info_hash: &[u8; 20],
         my_id: &[u8; 20],
-        metainfo: &'a crate::types::Metainfo,
     ) -> anyhow::Result<Self> {
         let mut peercon = TcpStream::connect(remote)
             .await
@@ -312,7 +309,6 @@ impl<'a> PeerState<'a> {
             their_bitfield: vec![],
             remote,
             conn: peercon,
-            metainfo,
             recv_buf: vec![],
             req_buf: vec![],
         })
@@ -378,14 +374,8 @@ impl<'a> PeerState<'a> {
     // TODO: kinds of error:
     //   * currently choked
     //   * peer disconnected before i finished downloading
-    pub async fn get_piece(&mut self, piece_idx: u32) -> anyhow::Result<Vec<u8>> {
+    pub async fn get_piece(&mut self, piece_idx: u32, piece_len: u32) -> anyhow::Result<Vec<u8>> {
         // TODO: check/set interested state, message about the change if needed
-
-        let piece_len = self.metainfo.info.piece_length().min(
-            (self.metainfo.info.length()
-                - (self.metainfo.info.piece_length() as u64) * piece_idx as u64) as u32,
-        );
-        eprintln!("expecting to get {} bytes for this piece", piece_len);
 
         while self.req_buf.iter().map(|rb| rb.buf.len()).sum::<usize>() < piece_len as usize {
             while self.req_buf.len() < (piece_len.div_ceil(PIECE_CHUNK_SZ)).try_into()?

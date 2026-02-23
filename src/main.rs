@@ -178,7 +178,7 @@ async fn main() -> anyhow::Result<()> {
                 .context("failed to read metainfo file")?;
 
             eprintln!("starting connection to peer {}", peer_address);
-            let mut peer = peer::PeerState::connect(peer_address, &peer_id, &metainf)
+            let mut peer = peer::PeerState::connect(peer_address, &metainf.info.hash()?, &peer_id)
                 .await
                 .context("failed to connect to peer")?;
 
@@ -218,7 +218,8 @@ async fn main() -> anyhow::Result<()> {
             };
             let selected_peer = peers[rand_peer_idx];
             eprintln!("chose peers[{}]: {}", rand_peer_idx, selected_peer);
-            let mut peer = peer::PeerState::connect(selected_peer, &peer_id, &metainf).await?;
+            let mut peer =
+                peer::PeerState::connect(selected_peer, &metainf.info.hash()?, &peer_id).await?;
             eprintln!("waiting for handshake");
             peer.wait_for_handshake().await?;
 
@@ -245,8 +246,14 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
+            let piece_len = metainf.info.piece_length().min(
+                (metainf.info.length() - (metainf.info.piece_length() as u64) * piece_index as u64)
+                    as u32,
+            );
+            eprintln!("expecting to get {} bytes for this piece", piece_len);
+
             eprintln!("fetching piece");
-            let piece_buf = peer.get_piece(piece_index).await?;
+            let piece_buf = peer.get_piece(piece_index, piece_len).await?;
 
             let mut f = OpenOptions::new()
                 .write(true)
@@ -288,7 +295,8 @@ async fn main() -> anyhow::Result<()> {
 
             // handshake begin
 
-            let mut peer = peer::PeerState::connect(peers[0], &peer_id, &metainf).await?;
+            let mut peer =
+                peer::PeerState::connect(peers[0], &metainf.info.hash()?, &peer_id).await?;
             eprintln!("waiting for handshake");
             peer.wait_for_handshake().await?;
 
@@ -324,7 +332,13 @@ async fn main() -> anyhow::Result<()> {
                     piece_index,
                     hex::encode(piece_hash)
                 );
-                let piece_buf = peer.get_piece(piece_index).await?;
+                let piece_len = metainf.info.piece_length().min(
+                    (metainf.info.length()
+                        - (metainf.info.piece_length() as u64) * piece_index as u64)
+                        as u32,
+                );
+                eprintln!("expecting to get {} bytes for this piece", piece_len);
+                let piece_buf = peer.get_piece(piece_index, piece_len).await?;
 
                 let piece_filename = downloaded_file_path
                     .to_str()
@@ -394,19 +408,6 @@ async fn main() -> anyhow::Result<()> {
                     tv[0].clone()
                 }
             };
-            let torrent = crate::types::Metainfo {
-                announce: String::from(""),
-                info: crate::types::InfoDict::SingleFile {
-                    name: String::from(""),
-                    piece_length: 0,
-                    length: 0,
-                    pieces: serde_bytes::ByteBuf::new(),
-                },
-                announce_list: vec![],
-                url_list: vec![],
-                created_by: String::from(""),
-                creation_date: 0,
-            };
 
             eprintln!("fetching peers from tracker[0] at {}", tracker_url);
             let peers = tracker::announce(&tracker_url, 1, maglink.info_hash, peer_id).await?;
@@ -427,7 +428,7 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("chose peers[{}]: {}", rand_peer_idx, selected_peer);
 
             let mut peer =
-                peer::PeerState::connect_ext(selected_peer, &maglink.info_hash, &peer_id, &torrent)
+                peer::PeerState::connect_ext(selected_peer, &maglink.info_hash, &peer_id)
                     .await
                     .context("failed to connect to peer")?;
 
