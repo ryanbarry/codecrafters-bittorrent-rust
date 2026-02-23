@@ -57,6 +57,10 @@ pub enum Commands {
     MagnetParse {
         magnet_link: String,
     },
+    #[command(name = "magnet_handshake")]
+    MagnetHandshake {
+        magnet_link: String,
+    },
 }
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
@@ -377,6 +381,59 @@ async fn main() -> anyhow::Result<()> {
                     .context("tracker URL required but not found")?
             );
             println!("Info Hash: {}", maglink.info_hash_hex());
+
+            Ok(())
+        }
+        // "magnet_handshake" => {
+        Commands::MagnetHandshake { magnet_link } => {
+            let maglink = MagnetLink::parse(magnet_link).context("parsing magnet link")?;
+            let tracker_url = match maglink.tr {
+                None => return Err(anyhow::anyhow!("no tracker URL in given magnet link")),
+                Some(tv) => {
+                    eprintln!("found {} trackers", tv.len());
+                    tv[0].clone()
+                }
+            };
+            let torrent = crate::types::Metainfo {
+                announce: String::from(""),
+                info: crate::types::InfoDict::SingleFile {
+                    name: String::from(""),
+                    piece_length: 0,
+                    length: 0,
+                    pieces: serde_bytes::ByteBuf::new(),
+                },
+                announce_list: vec![],
+                url_list: vec![],
+                created_by: String::from(""),
+                creation_date: 0,
+            };
+
+            eprintln!("fetching peers from tracker[0] at {}", tracker_url);
+            let peers = tracker::announce(&tracker_url, 1, maglink.info_hash, peer_id).await?;
+            eprintln!("got peers: {:?}", peers);
+
+            if peers.len() < 1 {
+                return Err(anyhow::anyhow!("no peers given in tracker's response"));
+            }
+
+            let rand_peer_idx = {
+                let mut rand = 7u32;
+                unsafe {
+                    _rdrand32_step(&mut rand);
+                }
+                rand as usize % peers.len()
+            };
+            let selected_peer = peers[rand_peer_idx];
+            eprintln!("chose peers[{}]: {}", rand_peer_idx, selected_peer);
+
+            let mut peer =
+                peer::PeerState::connect_ext(selected_peer, &maglink.info_hash, &peer_id, &torrent)
+                    .await
+                    .context("failed to connect to peer")?;
+
+            eprintln!("waiting for handshake...");
+            peer.wait_for_handshake().await?;
+            println!("Peer ID: {}", hex::encode(peer.remote_peer_id()));
 
             Ok(())
         }

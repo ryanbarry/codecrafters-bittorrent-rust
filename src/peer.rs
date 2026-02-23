@@ -31,11 +31,23 @@ impl PeerHandshake {
         }
     }
 
+    /// creates a handshake that indicates this peer supports extended messaging
+    /// as defined in BEP: https://www.bittorrent.org/beps/bep_0010.html
+    fn new_ext(info_hash: &[u8; 20], peer_id: &[u8; 20]) -> Self {
+        PeerHandshake {
+            version: 19,
+            proto: *b"BitTorrent protocol",
+            reserved: [0, 0, 0, 0, 0, 0x10, 0, 0],
+            info_hash: info_hash.clone(),
+            peer_id: peer_id.clone(),
+        }
+    }
+
     fn to_bytes(&self) -> [u8; 68] {
         let mut buf = [0u8; 68];
         buf[0] = self.version;
         buf[1..20].copy_from_slice(&self.proto);
-        // skipping reserved bytes, they're already zeroed
+        buf[20..28].copy_from_slice(&self.reserved);
         buf[28..48].copy_from_slice(&self.info_hash);
         buf[48..68].copy_from_slice(&self.peer_id);
         buf
@@ -96,7 +108,9 @@ impl fmt::Debug for PeerMessage {
             Self::Interested {} => write!(f, "Interested {{  }}"),
             Self::NotInterested {} => write!(f, "NotInterested {{  }}"),
             Self::Have { index } => write!(f, "Have {{ {} }}", index),
-            Self::Bitfield { sent_indices } => write!(f, "Bitfield {{ [size:{}] }}", sent_indices.len()),
+            Self::Bitfield { sent_indices } => {
+                write!(f, "Bitfield {{ [size:{}] }}", sent_indices.len())
+            }
             Self::Request {
                 index,
                 begin,
@@ -276,6 +290,37 @@ impl<'a> PeerState<'a> {
         })
     }
 
+    pub async fn connect_ext(
+        remote: SocketAddr,
+        info_hash: &[u8; 20],
+        my_id: &[u8; 20],
+        metainfo: &'a crate::types::Metainfo,
+    ) -> anyhow::Result<Self> {
+        let mut peercon = TcpStream::connect(remote)
+            .await
+            .context("failed to connect to peer")?;
+        let my_hand = PeerHandshake::new_ext(info_hash, my_id);
+        peercon
+            .write_all(&my_hand.to_bytes())
+            .await
+            .context("failed to send handshake to peer")?;
+
+        Ok(PeerState {
+            their_peer_id: [0; 20],
+            im_choked: true,
+            theyre_choked: false,
+            im_interested: false,
+            theyre_interested: false,
+            my_bitfield: vec![],
+            their_bitfield: vec![],
+            remote,
+            conn: peercon,
+            metainfo,
+            recv_buf: vec![],
+            req_buf: vec![],
+        })
+    }
+
     pub fn choking(&self) -> bool {
         self.im_choked
     }
@@ -339,11 +384,10 @@ impl<'a> PeerState<'a> {
     pub async fn get_piece(&mut self, piece_idx: u32) -> anyhow::Result<Vec<u8>> {
         // TODO: check/set interested state, message about the change if needed
 
-        let piece_len = self
-            .metainfo
-            .info
-            .piece_length()
-            .min((self.metainfo.info.length() - (self.metainfo.info.piece_length() as u64) * piece_idx as u64) as u32);
+        let piece_len = self.metainfo.info.piece_length().min(
+            (self.metainfo.info.length()
+                - (self.metainfo.info.piece_length() as u64) * piece_idx as u64) as u32,
+        );
         eprintln!("expecting to get {} bytes for this piece", piece_len);
 
         while self.req_buf.iter().map(|rb| rb.buf.len()).sum::<usize>() < piece_len as usize {
