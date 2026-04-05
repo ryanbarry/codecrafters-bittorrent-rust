@@ -439,6 +439,28 @@ async fn main() -> anyhow::Result<()> {
             peer.wait_for_handshake().await?;
             println!("Peer ID: {}", hex::encode(peer.remote_peer_id()));
 
+            eprintln!("checking if i have peer's bitfield");
+            while peer.bitfield().is_empty() {
+                let msgs = peer.poll().await?;
+                if msgs.is_empty() {
+                    eprintln!("got nothing from peer this round");
+                } else {
+                    for m in msgs {
+                        eprintln!("waiting for bitfield, got: {:?}", m);
+                    }
+                }
+            }
+
+            if peer.supports_extensions() {
+                eprintln!("peer supports extensions! sending extension handshake...");
+                // send extension handshake
+                peer.send_extension_handshake().await;
+                // recv extension handshake
+            } else {
+                eprintln!("peer does not support extensions.");
+            }
+
+            eprintln!("done.");
             Ok(())
         }
     }

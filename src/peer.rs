@@ -1,7 +1,9 @@
 use std::arch::x86_64::_rdrand32_step;
+use std::collections::HashMap;
 use std::{fmt, net::SocketAddr};
 
 use anyhow::{anyhow, Context};
+use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use tokio::{
@@ -11,7 +13,9 @@ use tokio::{
 
 const PIECE_CHUNK_SZ: u32 = 16 * 1024; // 16KiB
 
-#[derive(Deserialize, Serialize)]
+const EXT_MSG_ID_HANDSHAKE: u8 = 0;
+
+#[derive(Deserialize, Serialize, Default)]
 pub struct PeerHandshake {
     version: u8,
     proto: [u8; 19],
@@ -68,6 +72,31 @@ impl PeerHandshake {
     }
 }
 
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum PeerExtendedMessage {
+    PeerExtensionHandshake {
+        m: HashMap<String, u64>,
+        #[serde(rename = "p")]
+        port: Option<u16>,
+        #[serde(rename = "v")]
+        version: Option<String>,
+        yourip: Option<String>,
+        ipv6: Option<[u8; 16]>,
+        ipv4: Option<[u8; 4]>,
+        reqq: Option<u32>,
+        metadata_size: Option<u32>, // added in BEP 0009 "metadata extension"
+    },
+}
+
+impl PeerExtendedMessage {
+    fn msg_id(&self) -> u8 {
+        match &self {
+            PeerExtendedMessage::PeerExtensionHandshake { .. } => EXT_MSG_ID_HANDSHAKE,
+        }
+    }
+}
+
 pub enum PeerMessage {
     Choke {},
     Unchoke {},
@@ -93,6 +122,10 @@ pub enum PeerMessage {
         index: u32,
         begin: u32,
         length: u32,
+    },
+    Extended {
+        ext_message_id: u8,
+        payload: Vec<u8>,
     },
 }
 
@@ -122,6 +155,14 @@ impl fmt::Debug for PeerMessage {
                 begin,
                 length,
             } => write!(f, "Cancel {{ {}, {}, {} }}", index, begin, length),
+            Self::Extended {
+                ext_message_id,
+                payload,
+            } => write!(
+                f,
+                "Extended {{ {ext_message_id}, [...payload[{}]...] }}",
+                payload.len()
+            ),
         }
     }
 }
@@ -161,6 +202,10 @@ impl PeerMessage {
                 index: u32::from_be_bytes(buf[1..5].try_into()?),
                 begin: u32::from_be_bytes(buf[5..9].try_into()?),
                 length: u32::from_be_bytes(buf[9..13].try_into()?),
+            }),
+            20 => Ok(Self::Extended {
+                ext_message_id: u8::from(buf[1]),
+                payload: Vec::from(&buf[2..]),
             }),
             _ => Err(anyhow!("got unexpected PeerMessage type: {}", buf[0])),
         }
@@ -221,6 +266,15 @@ impl PeerMessage {
                 .chain(length.to_be_bytes().iter())
                 .copied()
                 .collect(),
+            Self::Extended {
+                ext_message_id,
+                payload,
+            } => [20]
+                .iter()
+                .chain(ext_message_id.to_be_bytes().iter())
+                .chain(payload)
+                .copied()
+                .collect(),
         }
     }
 }
@@ -234,7 +288,7 @@ struct PieceRequest {
 
 #[allow(dead_code)]
 pub struct PeerState {
-    their_peer_id: [u8; 20],
+    their_handshake: PeerHandshake,
     im_choked: bool,
     theyre_choked: bool,
     im_interested: bool,
@@ -271,7 +325,7 @@ impl PeerState {
             .context("failed to send handshake to peer")?;
 
         Ok(PeerState {
-            their_peer_id: [0; 20],
+            their_handshake: PeerHandshake::default(),
             im_choked: true,
             theyre_choked: false,
             im_interested: false,
@@ -300,7 +354,7 @@ impl PeerState {
             .context("failed to send handshake to peer")?;
 
         Ok(PeerState {
-            their_peer_id: [0; 20],
+            their_handshake: PeerHandshake::default(),
             im_choked: true,
             theyre_choked: false,
             im_interested: false,
@@ -331,7 +385,11 @@ impl PeerState {
     }
 
     pub fn remote_peer_id(&self) -> [u8; 20] {
-        self.their_peer_id
+        self.their_handshake.peer_id
+    }
+
+    pub fn supports_extensions(&self) -> bool {
+        (self.their_handshake.reserved[5] & 0x10) == 0x10
     }
 
     pub async fn wait_for_handshake(&mut self) -> anyhow::Result<()> {
@@ -360,9 +418,8 @@ impl PeerState {
             if self.recv_buf.len() >= 68 {
                 let new_buf = self.recv_buf.split_off(68);
                 let hs_bytes = &self.recv_buf;
-                let their_hand = PeerHandshake::from_bytes(hs_bytes);
+                self.their_handshake = PeerHandshake::from_bytes(hs_bytes);
                 self.recv_buf = new_buf;
-                self.their_peer_id = their_hand.peer_id;
                 break 'ultimate;
             } else {
                 eprintln!("not enough bytes to start");
@@ -509,13 +566,24 @@ impl PeerState {
 
     async fn send_msg(&mut self, msg: PeerMessage) -> anyhow::Result<usize> {
         let mut to_send = msg.to_bytes();
-        let mut bytes_out = Vec::from(to_send.len().to_be_bytes());
+        let mut bytes_out = Vec::with_capacity(to_send.len() + 4);
+        bytes_out.put_slice(&(to_send.len() as u32).to_be_bytes()); // prefix message with length
         bytes_out.append(&mut to_send);
         self.conn
             .write_all(&bytes_out)
             .await
             .context("failed writing to peer connection")
             .map(|_| bytes_out.len())
+    }
+
+    async fn send_extended_msg(&mut self, msg: PeerExtendedMessage) -> anyhow::Result<usize> {
+        let protocol_msg = PeerMessage::Extended {
+            ext_message_id: msg.msg_id(),
+            payload: serde_bencode::to_bytes(&msg)
+                .expect("failed serializing extended message payload"),
+        };
+
+        self.send_msg(protocol_msg).await
     }
 
     // TODO: types of error responses
@@ -563,10 +631,15 @@ impl PeerState {
 
                 Ok(msg)
             }
-            _ => {
-                eprintln!("non-bitfield message");
-                Err(anyhow!("got unexpected PeerMessage kind: {:?}", msg))
+            PeerMessage::Extended {
+                ext_message_id,
+                payload: _,
+            } => {
+                eprintln!("got an extended message with id {ext_message_id}");
+
+                Ok(msg)
             }
+            _ => Err(anyhow!("got unexpected PeerMessage kind: {:?}", msg)),
         }
     }
 
@@ -595,5 +668,22 @@ impl PeerState {
         } else {
             Err(anyhow!("not enough bytes for a msglen"))
         }
+    }
+
+    pub async fn send_extension_handshake(&mut self) {
+        let my_hs_payload = PeerExtendedMessage::PeerExtensionHandshake {
+            m: HashMap::from([("ut_metadata".into(), 16)]),
+            port: None,
+            version: None,
+            yourip: None,
+            ipv6: None,
+            ipv4: None,
+            reqq: None,
+            metadata_size: None,
+        };
+
+        self.send_extended_msg(my_hs_payload)
+            .await
+            .expect("failed sending peer extension handshake");
     }
 }
