@@ -456,6 +456,27 @@ async fn main() -> anyhow::Result<()> {
                 // send extension handshake
                 peer.send_extension_handshake().await;
                 // recv extension handshake
+                let mut their_extensions = peer.extensions_supported();
+                while their_extensions.is_empty() {
+                    let msgs = peer.poll().await?;
+                    if msgs.is_empty() {
+                        eprintln!("got nothing from peer this round");
+                    } else {
+                        for m in msgs {
+                            eprintln!("waiting for extension handshake, got: {m:?}");
+                        }
+                    }
+                    their_extensions = peer.extensions_supported();
+                }
+
+                if their_extensions.contains("ut_metadata") {
+                    println!(
+                        "Peer Metadata Extension ID: {}",
+                        peer.extension_id("ut_metadata").unwrap()
+                    );
+                } else {
+                    println!("Peer Metadata Extension is NOT supported!");
+                }
             } else {
                 eprintln!("peer does not support extensions.");
             }

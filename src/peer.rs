@@ -1,5 +1,5 @@
 use std::arch::x86_64::_rdrand32_step;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::{fmt, net::SocketAddr};
 
 use anyhow::{anyhow, Context};
@@ -13,9 +13,7 @@ use tokio::{
 
 const PIECE_CHUNK_SZ: u32 = 16 * 1024; // 16KiB
 
-const EXT_MSG_ID_HANDSHAKE: u8 = 0;
-
-#[derive(Deserialize, Serialize, Default)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct PeerHandshake {
     version: u8,
     proto: [u8; 19],
@@ -72,27 +70,35 @@ impl PeerHandshake {
     }
 }
 
-#[derive(Serialize)]
-#[serde(untagged)]
-pub enum PeerExtendedMessage {
-    PeerExtensionHandshake {
-        m: HashMap<String, u64>,
-        #[serde(rename = "p")]
-        port: Option<u16>,
-        #[serde(rename = "v")]
-        version: Option<String>,
-        yourip: Option<String>,
-        ipv6: Option<[u8; 16]>,
-        ipv4: Option<[u8; 4]>,
-        reqq: Option<u32>,
-        metadata_size: Option<u32>, // added in BEP 0009 "metadata extension"
-    },
+trait ExtendedMessage {
+    fn msg_id(&self) -> u8;
+    fn make_peer_message(&self) -> PeerMessage;
 }
 
-impl PeerExtendedMessage {
+#[derive(Default, Deserialize, Serialize)]
+pub struct PeerExtensionHandshake {
+    m: HashMap<String, u32>,
+    #[serde(rename = "p")]
+    port: Option<u16>,
+    #[serde(rename = "v")]
+    version: Option<String>,
+    yourip: Option<ByteBuf>,
+    ipv6: Option<[u8; 16]>,
+    ipv4: Option<[u8; 4]>,
+    reqq: Option<u32>,
+    metadata_size: Option<u32>, // added in BEP 0009 "metadata extension"
+}
+
+impl ExtendedMessage for PeerExtensionHandshake {
     fn msg_id(&self) -> u8 {
-        match &self {
-            PeerExtendedMessage::PeerExtensionHandshake { .. } => EXT_MSG_ID_HANDSHAKE,
+        0
+    }
+
+    fn make_peer_message(&self) -> PeerMessage {
+        PeerMessage::Extended {
+            ext_message_id: self.msg_id(),
+            payload: serde_bencode::to_bytes(self)
+                .expect("failed serializing PeerExtensionHandshake"),
         }
     }
 }
@@ -299,6 +305,7 @@ pub struct PeerState {
     conn: TcpStream,
     recv_buf: Vec<u8>,
     req_buf: Vec<PieceRequest>,
+    their_extension_ids: HashMap<String, u32>,
 }
 
 // state machine
@@ -336,6 +343,7 @@ impl PeerState {
             conn: peerconn,
             recv_buf: vec![],
             req_buf: vec![],
+            their_extension_ids: HashMap::new(),
         })
     }
 
@@ -365,6 +373,7 @@ impl PeerState {
             conn: peercon,
             recv_buf: vec![],
             req_buf: vec![],
+            their_extension_ids: HashMap::new(),
         })
     }
 
@@ -390,6 +399,14 @@ impl PeerState {
 
     pub fn supports_extensions(&self) -> bool {
         (self.their_handshake.reserved[5] & 0x10) == 0x10
+    }
+
+    pub fn extensions_supported(&self) -> HashSet<String> {
+        self.their_extension_ids.keys().cloned().collect()
+    }
+
+    pub fn extension_id(&self, name: &str) -> Option<u32> {
+        self.their_extension_ids.get(name).copied()
     }
 
     pub async fn wait_for_handshake(&mut self) -> anyhow::Result<()> {
@@ -576,14 +593,8 @@ impl PeerState {
             .map(|_| bytes_out.len())
     }
 
-    async fn send_extended_msg(&mut self, msg: PeerExtendedMessage) -> anyhow::Result<usize> {
-        let protocol_msg = PeerMessage::Extended {
-            ext_message_id: msg.msg_id(),
-            payload: serde_bencode::to_bytes(&msg)
-                .expect("failed serializing extended message payload"),
-        };
-
-        self.send_msg(protocol_msg).await
+    async fn send_extended_msg<M: ExtendedMessage>(&mut self, msg: M) -> anyhow::Result<usize> {
+        self.send_msg(msg.make_peer_message()).await
     }
 
     // TODO: types of error responses
@@ -633,9 +644,26 @@ impl PeerState {
             }
             PeerMessage::Extended {
                 ext_message_id,
-                payload: _,
+                ref payload,
             } => {
-                eprintln!("got an extended message with id {ext_message_id}");
+                match ext_message_id {
+                    0 => {
+                        // decode extension handshake
+                        let their_ext_hs: PeerExtensionHandshake =
+                            serde_bencode::from_bytes(payload)
+                                .expect("failed deserializing the peer extension handshake");
+
+                        for (k, v) in their_ext_hs.m {
+                            // let ext_name = String::from_utf8(k)
+                            //     .expect("failed to decode extension name as utf8: {k:02x?}");
+                            // self.their_extension_ids.insert(ext_name, v);
+                            self.their_extension_ids.insert(k, v);
+                        }
+                    }
+                    _ => {
+                        eprintln!("got unsupported extension message (ID: {ext_message_id})");
+                    }
+                }
 
                 Ok(msg)
             }
@@ -671,19 +699,44 @@ impl PeerState {
     }
 
     pub async fn send_extension_handshake(&mut self) {
-        let my_hs_payload = PeerExtendedMessage::PeerExtensionHandshake {
+        let my_hs_payload = PeerExtensionHandshake {
             m: HashMap::from([("ut_metadata".into(), 16)]),
-            port: None,
-            version: None,
-            yourip: None,
-            ipv6: None,
-            ipv4: None,
-            reqq: None,
-            metadata_size: None,
+            ..Default::default()
         };
 
         self.send_extended_msg(my_hs_payload)
             .await
             .expect("failed sending peer extension handshake");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_peer_extension_handshake() {
+        // bencode: d1:md11:ut_metadatai16eee
+        // {"m": {"ut_metadata": 16}}
+        let raw: &[u8] = &[
+            0x64, 0x31, 0x3a, 0x6d, 0x64, 0x31, 0x31, 0x3a, 0x75, 0x74, 0x5f, 0x6d, 0x65, 0x74,
+            0x61, 0x64, 0x61, 0x74, 0x61, 0x69, 0x31, 0x36, 0x65, 0x65, 0x65,
+        ];
+        let hs: PeerExtensionHandshake =
+            serde_bencode::from_bytes(raw).expect("failed to deserialize 1");
+        assert_eq!(hs.m.get(&"ut_metadata".to_string()), Some(&16));
+
+        let raw: &[u8] = &[
+            0x64, 0x31, 0x3a, 0x6d, 0x64, 0x31, 0x31, 0x3a, 0x75, 0x74, 0x5f, 0x6d, 0x65, 0x74,
+            0x61, 0x64, 0x61, 0x74, 0x61, 0x69, 0x31, 0x65, 0x36, 0x3a, 0x75, 0x74, 0x5f, 0x70,
+            0x65, 0x78, 0x69, 0x32, 0x65, 0x65, 0x31, 0x33, 0x3a, 0x6d, 0x65, 0x74, 0x61, 0x64,
+            0x61, 0x74, 0x61, 0x5f, 0x73, 0x69, 0x7a, 0x65, 0x69, 0x31, 0x33, 0x32, 0x65, 0x34,
+            0x3a, 0x72, 0x65, 0x71, 0x71, 0x69, 0x32, 0x35, 0x30, 0x65, 0x31, 0x3a, 0x76, 0x31,
+            0x30, 0x3a, 0x52, 0x61, 0x69, 0x6e, 0x20, 0x30, 0x2e, 0x30, 0x2e, 0x30, 0x36, 0x3a,
+            0x79, 0x6f, 0x75, 0x72, 0x69, 0x70, 0x34, 0x3a, 0x17, 0x5d, 0x58, 0xd2, 0x65,
+        ];
+        let hs: PeerExtensionHandshake =
+            serde_bencode::from_bytes(raw).expect("failed to deserialize 2");
+        assert_eq!(hs.m.get(&"ut_metadata".to_string()), Some(&1));
     }
 }
