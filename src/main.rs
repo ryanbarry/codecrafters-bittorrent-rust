@@ -258,6 +258,7 @@ async fn main() -> anyhow::Result<()> {
             let mut f = OpenOptions::new()
                 .write(true)
                 .create(true)
+                .truncate(false)
                 .open(&downloaded_file_path)
                 .await
                 .context("error opening file for writing piece")?;
@@ -349,6 +350,7 @@ async fn main() -> anyhow::Result<()> {
                 let mut f = OpenOptions::new()
                     .write(true)
                     .create(true)
+                    .truncate(false)
                     .open(&piece_filename)
                     .await
                     .context("error opening file for writing piece")?;
@@ -363,6 +365,7 @@ async fn main() -> anyhow::Result<()> {
             let mut output = OpenOptions::new()
                 .write(true)
                 .create(true)
+                .truncate(false)
                 .open(&downloaded_file_path)
                 .await
                 .context("error opening out file")?;
@@ -413,7 +416,7 @@ async fn main() -> anyhow::Result<()> {
             let peers = tracker::announce(&tracker_url, 1, maglink.info_hash, peer_id).await?;
             eprintln!("got peers: {:?}", peers);
 
-            if peers.len() < 1 {
+            if peers.is_empty() {
                 return Err(anyhow::anyhow!("no peers given in tracker's response"));
             }
 

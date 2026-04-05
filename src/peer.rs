@@ -26,8 +26,8 @@ impl PeerHandshake {
             version: 19,
             proto: *b"BitTorrent protocol",
             reserved: [0; 8],
-            info_hash: info_hash.clone(),
-            peer_id: peer_id.clone(),
+            info_hash: *info_hash,
+            peer_id: *peer_id,
         }
     }
 
